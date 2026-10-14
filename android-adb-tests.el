@@ -1,0 +1,86 @@
+;;; android-adb-tests.el --- Device communication tests -*- lexical-binding: t; -*-
+
+(require 'ert)
+(require 'android-adb)
+
+(ert-deftest android-adb-parser-keeps-device-states ()
+  (should
+   (equal (android-adb-parse-devices
+           "* daemon started successfully\nList of devices attached\nA device product:p model:Pixel_9 device:x transport_id:1\nB offline\nC unauthorized\nD no permissions (missing udev rules)\n")
+          '((:serial "A" :state device :product "p" :model "Pixel_9"
+             :device "x" :transport-id "1")
+            (:serial "B" :state offline)
+            (:serial "C" :state unauthorized)
+            (:serial "D" :state no-permissions)))))
+
+(ert-deftest android-adb-command-preserves-argument-boundaries ()
+  (cl-letf (((symbol-function 'android-adb-executable)
+             (lambda () "/SDK with spaces/adb")))
+    (should (equal (android-adb-command "SER1" "install" "/an apk.apk")
+                   '("/SDK with spaces/adb" "-s" "SER1" "install" "/an apk.apk")))))
+
+(ert-deftest android-adb-explicit-program-does-not-silently-fallback ()
+  (let ((android-adb-program "/missing/adb"))
+    (cl-letf (((symbol-function 'file-executable-p) (lambda (_) nil))
+              ((symbol-function 'executable-find) (lambda (_) "/another/adb")))
+      (should-error (android-adb-executable) :type 'user-error))))
+
+(ert-deftest android-adb-executable-falls-back-to-sdk ()
+  (let ((android-adb-program nil)
+        (android-adb-sdk-directory "/sdk"))
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) nil))
+              ((symbol-function 'file-executable-p)
+               (lambda (file) (equal file "/sdk/platform-tools/adb"))))
+      (should (equal (android-adb-executable) "/sdk/platform-tools/adb")))))
+
+(ert-deftest android-adb-read-device-uses-only-ready-devices ()
+  (cl-letf (((symbol-function 'android-adb-devices)
+             (lambda (&optional _)
+               '((:serial "OFF" :state offline)
+                 (:serial "OK" :state device :model "Pixel")))))
+    (should (equal (android-adb-read-device) "OK"))))
+
+(ert-deftest android-adb-read-device-reports-authorization ()
+  (cl-letf (((symbol-function 'android-adb-devices)
+             (lambda (&optional _) '((:serial "SER1" :state unauthorized)))))
+    (let ((error (should-error (android-adb-read-device) :type 'user-error)))
+      (should (string-match-p "unauthorized" (error-message-string error))))))
+
+(ert-deftest android-adb-query-cleans-up-on-success-and-failure ()
+  (cl-letf (((symbol-function 'android-adb-command)
+             (lambda (_serial &rest arguments)
+               (list shell-file-name "-c" (car arguments)))))
+    (should (equal (android-adb-query nil "printf 'hello'") "hello"))
+    (should-error (android-adb-query nil "printf 'failed'; exit 1") :type 'user-error)
+    (should-not (get-buffer " *android-adb-query*"))))
+
+(ert-deftest android-adb-query-timeout-kills-process ()
+  (let ((android-adb-query-timeout 0.05) process)
+    (cl-letf (((symbol-function 'android-adb-command)
+               (lambda (&rest _) (list shell-file-name "-c" "exec sleep 10")))
+              ((symbol-function 'android-adb-start)
+               (lambda (_serial _arguments &rest options)
+                 (setq process (make-process :name "adb-timeout-test"
+                                             :command (list shell-file-name "-c" "exec sleep 10")
+                                             :buffer (plist-get options :buffer)
+                                             :sentinel #'ignore :noquery t)))))
+      (should-error (android-adb-query nil "devices") :type 'user-error)
+      (should-not (process-live-p process))
+      (should-not (get-buffer " *android-adb-query*")))))
+
+(ert-deftest android-adb-query-start-failure-preserves-buffer-process ()
+  (let ((buffer (generate-new-buffer " *adb-existing-process*")) process)
+    (unwind-protect
+        (with-current-buffer buffer
+          (setq process (make-process :name "adb-existing-process"
+                                      :buffer buffer :command '("sleep" "10")
+                                      :sentinel #'ignore :noquery t))
+          (cl-letf (((symbol-function 'android-adb-start)
+                     (lambda (&rest _) (user-error "Cannot find adb"))))
+            (should-error (android-adb-query nil "devices") :type 'user-error)
+            (should (process-live-p process))))
+      (when (and process (process-live-p process)) (delete-process process))
+      (kill-buffer buffer))))
+
+(provide 'android-adb-tests)
+;;; android-adb-tests.el ends here
