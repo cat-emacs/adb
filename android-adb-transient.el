@@ -169,6 +169,83 @@
     (android-adb--buffer-output "*android-adb-battery*" 0
                                 (format "%S" (android-adb-battery serial)))))
 
+(defun android-adb--read-host ()
+  "Read a host and optional port."
+  (read-string "Host[:port]: "))
+
+(defun android-adb-connect-host (host)
+  "Connect to HOST."
+  (interactive (list (android-adb--read-host)))
+  (message "android-adb: %s" (android-adb-connect host)))
+
+(defun android-adb-disconnect-host (host)
+  "Disconnect HOST, or all hosts when empty."
+  (interactive (list (let ((value (android-adb--read-host)))
+                       (unless (string-empty-p value) value))))
+  (message "android-adb: %s" (android-adb-disconnect host)))
+
+(defun android-adb-pair-host (host code)
+  "Pair with HOST using CODE."
+  (interactive (list (android-adb--read-host) (read-string "Pairing code: ")))
+  (message "android-adb: %s" (android-adb-pair host code)))
+
+(defun android-adb-show-state ()
+  "Display the state of the default device."
+  (interactive)
+  (let ((serial (android-adb-read-device)))
+    (message "android-adb: %s" (android-adb-get-state serial))))
+
+(defun android-adb-wait-device ()
+  "Wait for the default device to become ready."
+  (interactive)
+  (let ((serial android-adb-default-device-serial))
+    (android-adb-wait-for-device
+     serial nil
+     (lambda (status output)
+       (android-adb--report-operation "wait-for-device" status output)))))
+
+(defun android-adb-reboot-device (mode)
+  "Reboot the default device into MODE."
+  (interactive (list (let ((value (completing-read "Reboot mode: "
+                                                    '("system" "bootloader" "recovery" "sideload" "sideload-auto")
+                                                    nil t nil nil "system")))
+                       (unless (string= value "system") value))))
+  (android-adb-reboot
+   (android-adb-read-device) mode
+   (lambda (status output) (android-adb--report-operation "reboot" status output))))
+
+(defun android-adb-switch-tcpip (port)
+  "Switch the default device to TCP/IP PORT."
+  (interactive "sTCP/IP port: ")
+  (android-adb-tcpip
+   (android-adb-read-device) port
+   (lambda (status output) (android-adb--report-operation "tcpip" status output))))
+
+(defun android-adb-switch-usb ()
+  "Switch the default device back to USB."
+  (interactive)
+  (android-adb-usb
+   (android-adb-read-device)
+   (lambda (status output) (android-adb--report-operation "usb" status output))))
+
+(defun android-adb-install-multiple-files (apks)
+  "Install selected APKS on the default device."
+  (interactive (list (let ((file (read-file-name "APK: " nil nil t)))
+                       (let ((files (list file)))
+                         (while (y-or-n-p "Add another APK? ")
+                           (push (read-file-name "APK: " nil nil t) files))
+                         (nreverse files)))))
+  (android-adb-install-multiple
+   (android-adb-read-device) apks
+   (lambda (status output) (android-adb--report-operation "install-multiple" status output))))
+
+(defun android-adb-create-bugreport (destination)
+  "Write a bug report to DESTINATION."
+  (interactive (list (read-file-name "Bug report destination: ")))
+  (android-adb-bugreport
+   (android-adb-read-device) destination
+   (lambda (status output) (android-adb--report-operation "bugreport" status output))))
+
 (defun android-adb-shell (command)
   "Run COMMAND through adb shell on the default device.
 COMMAND is split into arguments using `split-string-and-unquote', not passed
@@ -199,6 +276,15 @@ through a host shell."
     ("S" "Start server" android-adb-start-server)
     ("K" "Kill server" android-adb-kill-server)
     ("r" "Reconnect" android-adb-reconnect)]
+   ["Network"
+    ("c" "Connect" android-adb-connect-host)
+    ("d" "Disconnect" android-adb-disconnect-host)
+    ("p" "Pair" android-adb-pair-host)]
+   ["System"
+    ("R" "Reboot" android-adb-reboot-device)
+    ("t" "TCP/IP" android-adb-switch-tcpip)
+    ("U" "USB" android-adb-switch-usb)
+    ("w" "Wait for device" android-adb-wait-device)]
    ["App"
     ("i" "Install APK" android-adb-install-apk-file)
     ("l" "Launch package" android-adb-launch-package-command)
@@ -207,10 +293,13 @@ through a host shell."
     ("c" "Clear package data" android-adb-clear-package)]
    ["Files"
     ("p" "Push file" android-adb-push-file)
-    ("P" "Pull file" android-adb-pull-file)]
-   ["Network"
+    ("P" "Pull file" android-adb-pull-file)
+    ("m" "Install multiple APKs" android-adb-install-multiple-files)]
+   ["Ports"
     ("f" "Forward port" android-adb-forward-port)
     ("r" "Reverse port" android-adb-reverse-port)]
+   ["Debug"
+    ("B" "Bugreport" android-adb-create-bugreport)]
    ["Info"
     ("I" "Device info" android-adb-show-device-info)
     ("b" "Battery" android-adb-show-battery)

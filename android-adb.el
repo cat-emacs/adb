@@ -230,6 +230,66 @@ otherwise use the Android launcher category.  CALLBACK receives status/output."
     (when (string-match "Physical size:[[:space:]]*\\([0-9]+x[0-9]+\\)" output)
       (match-string 1 output))))
 
+(defun android-adb-connect (host)
+  "Connect to HOST, returning adb output."
+  (android-adb-query nil "connect" host))
+
+(defun android-adb-disconnect (&optional host)
+  "Disconnect HOST, or all TCP/IP devices when HOST is nil."
+  (if host
+      (android-adb-query nil "disconnect" host)
+    (android-adb-query nil "disconnect")))
+
+(defun android-adb-pair (host pairing-code)
+  "Pair with HOST using PAIRING-CODE, returning adb output."
+  (android-adb-query nil "pair" host pairing-code))
+
+(defun android-adb-get-state (serial)
+  "Return the state of SERIAL."
+  (string-trim (android-adb-query serial "get-state")))
+
+(defun android-adb-get-serialno (serial)
+  "Return the serial number reported by SERIAL."
+  (string-trim (android-adb-query serial "get-serialno")))
+
+(defun android-adb-wait-for-device (serial &optional state callback)
+  "Wait asynchronously for SERIAL to reach STATE.
+STATE defaults to `device'.  CALLBACK receives status and output."
+  (android-adb--start-operation
+   serial (list (format "wait-for-%s" (or state "device"))) "wait-for-device" callback))
+
+(defun android-adb-reboot (serial &optional mode callback)
+  "Reboot SERIAL, optionally into MODE, asynchronously."
+  (android-adb--start-operation
+   serial (if mode (list "reboot" mode) '("reboot")) "reboot" callback))
+
+(defun android-adb-tcpip (serial port &optional callback)
+  "Restart adbd on SERIAL in TCP mode at PORT.
+CALLBACK receives status and output."
+  (android-adb--start-operation
+   serial (list "tcpip" port) "tcpip" callback))
+
+(defun android-adb-usb (serial &optional callback)
+  "Restart adbd on SERIAL in USB mode.
+CALLBACK receives status and output."
+  (android-adb--start-operation serial '("usb") "usb" callback))
+
+(defun android-adb-install-multiple (serial apks &optional callback)
+  "Install APKS atomically on SERIAL and return its process.
+APKS is a non-empty list of readable APK paths.  CALLBACK receives status
+and output."
+  (unless (and apks (seq-every-p #'file-readable-p apks))
+    (user-error "Select one or more readable APK files"))
+  (android-adb--start-operation
+   serial (append '("install-multiple" "-r") (mapcar #'expand-file-name apks))
+   "install-multiple" callback))
+
+(defun android-adb-bugreport (serial destination &optional callback)
+  "Write a bug report for SERIAL to DESTINATION asynchronously.
+CALLBACK receives status and output."
+  (android-adb--start-operation
+   serial (list "bugreport" (expand-file-name destination)) "bugreport" callback))
+
 (defun android-adb-parse-devices (output)
   "Parse `adb devices -l' OUTPUT into device plists.
 Each device has :serial and :state; optional keys include :model, :product,

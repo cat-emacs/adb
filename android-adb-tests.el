@@ -36,6 +36,25 @@
           (should (member '("SER1" ("uninstall" "com.example.app")) commands)))
       (delete-file apk))))
 
+(ert-deftest android-adb-interactive-command-builders ()
+  (let ((apk (make-temp-file "android-adb-test" nil ".apk")) commands)
+    (unwind-protect
+        (cl-letf (((symbol-function 'android-adb-start)
+                   (lambda (serial arguments &rest _options)
+                     (push (list serial arguments) commands)
+                     'fake-process)))
+          (android-adb-reboot "SER1" "recovery")
+          (android-adb-tcpip "SER1" "5555")
+          (android-adb-usb "SER1")
+          (android-adb-install-multiple "SER1" (list apk))
+          (android-adb-bugreport "SER1" "/tmp/report.zip")
+          (should (member '("SER1" ("reboot" "recovery")) commands))
+          (should (member '("SER1" ("tcpip" "5555")) commands))
+          (should (member '("SER1" ("usb")) commands))
+          (should (member (list "SER1" (list "install-multiple" "-r" apk))
+                         commands)))
+      (delete-file apk))))
+
 (ert-deftest android-adb-parser-keeps-device-states ()
   (should
    (equal (android-adb-parse-devices

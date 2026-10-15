@@ -13,7 +13,11 @@
   (should (transient-get-suffix 'android-adb "f"))
   (should (transient-get-suffix 'android-adb "I"))
   (should (transient-get-suffix 'android-adb "c"))
-  (should (transient-get-suffix 'android-adb "r")))
+  (should (transient-get-suffix 'android-adb "r"))
+  (should (transient-get-suffix 'android-adb "c"))
+  (should (transient-get-suffix 'android-adb "R"))
+  (should (transient-get-suffix 'android-adb "m"))
+  (should (transient-get-suffix 'android-adb "B")))
 
 (provide 'android-adb-transient-tests)
 ;;; android-adb-transient-tests.el ends here

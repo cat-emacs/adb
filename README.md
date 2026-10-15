@@ -26,6 +26,13 @@ package-vc as well; their package metadata does not register a VC source.
   `android-adb-uninstall`, `android-adb-clear-package-data`: application
   lifecycle operations.
 - `android-adb-push` / `android-adb-pull`: asynchronous file transfer.
+- `android-adb-connect` / `android-adb-disconnect` / `android-adb-pair`:
+  network device management.
+- `android-adb-get-state`, `android-adb-get-serialno`,
+  `android-adb-wait-for-device`, `android-adb-reboot`, `android-adb-tcpip`, and
+  `android-adb-usb`: device state and transport control.
+- `android-adb-install-multiple` and `android-adb-bugreport`: multi-APK
+  installation and bug report generation.
 - `android-adb-forward` / `android-adb-reverse`: port mapping.
 - `android-adb-getprop`, `android-adb-device-info`, `android-adb-battery`, and
   `android-adb-display-size`: common device queries.
@@ -36,9 +43,10 @@ package-vc as well; their package metadata does not register a VC source.
   and selection of a usable serial.
 - `android-adb-transient.el` provides `M-x android-adb`: a Transient menu for
   device selection/listing, adb server management, reconnect, APK installation,
-  app lifecycle, file transfer, port forwarding/reverse, device information,
-  and an adb shell command. Loading `android-adb.el` alone does not load
-  Transient.
+  app lifecycle, file transfer, port forwarding/reverse, network pairing,
+  reboot/TCP/USB switching, bugreports, device information, and an adb shell
+  command. Interactive prompts select devices, APKs, files, packages, hosts,
+  and ports. Loading `android-adb.el` alone does not load Transient.
 
 Set `android-adb-default-device-serial` to avoid repeated selection prompts.
 The Transient menu uses the same default serial as the programmatic interface.
