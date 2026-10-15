@@ -3,6 +3,22 @@
 (require 'ert)
 (require 'android-adb)
 
+(ert-deftest android-adb-install-apk-builds-command ()
+  (let ((apk (make-temp-file "android-adb-test" nil ".apk")) command)
+    (unwind-protect
+        (cl-letf (((symbol-function 'android-adb-start)
+                   (lambda (serial arguments &rest options)
+                     (setq command (list serial arguments options))
+                     'fake-process)))
+          (should (eq (android-adb-install-apk "SER1" apk) 'fake-process))
+          (should (equal (car command) "SER1"))
+          (should (equal (cadr command) (list "install" "-r" apk))))
+      (delete-file apk))))
+
+(ert-deftest android-adb-install-apk-rejects-missing-file ()
+  (should-error (android-adb-install-apk "SER1" "/missing/test.apk")
+                :type 'user-error))
+
 (ert-deftest android-adb-parser-keeps-device-states ()
   (should
    (equal (android-adb-parse-devices

@@ -65,6 +65,25 @@
   (let ((output (android-adb-query android-adb-default-device-serial "reconnect")))
     (android-adb--buffer-output "*android-adb-reconnect*" 0 output)))
 
+(defun android-adb-install-apk-file (apk)
+  "Install APK selected by the user on the default Android device."
+  (interactive (list (read-file-name "APK: " nil nil t nil
+                                      (lambda (file)
+                                        (or (file-directory-p file)
+                                            (string-match-p "\\.apk\\'" file))))))
+  (let ((serial (android-adb-read-device)))
+    (android-adb-install-apk
+     serial apk
+     (lambda (status output)
+       (if (and (zerop status) (string-match-p "Success" output))
+           (message "android-adb: installed %s on %s"
+                    (file-name-nondirectory apk) serial)
+         (android-adb--buffer-output
+          (format "*android-adb-install %s*"
+                  (file-name-nondirectory apk))
+          status output)
+         (message "android-adb: install failed with status %s" status))))))
+
 (defun android-adb-shell (command)
   "Run COMMAND through adb shell on the default device.
 COMMAND is split into arguments using `split-string-and-unquote', not passed
@@ -96,6 +115,7 @@ through a host shell."
     ("K" "Kill server" android-adb-kill-server)
     ("r" "Reconnect" android-adb-reconnect)]
    ["Command"
+    ("i" "Install APK" android-adb-install-apk-file)
     ("x" "Run shell command" android-adb-shell)]])
 
 (provide 'android-adb-transient)

@@ -108,6 +108,30 @@ operations should use `android-adb-start' instead."
       (when (and process (process-live-p process)) (delete-process process))
       (kill-buffer buffer))))
 
+(defun android-adb-install-apk (serial apk &optional callback)
+  "Install APK on SERIAL asynchronously and return its process.
+Use `-r' to replace an existing installation.  CALLBACK, when non-nil, is
+called with the process exit status and complete output after adb exits."
+  (unless (file-readable-p apk)
+    (user-error "Cannot read APK: %s" apk))
+  (let* ((buffer (get-buffer-create
+                  (format "*android-adb-install %s*"
+                          (file-name-nondirectory apk))))
+         (process
+          (android-adb-start
+           serial (list "install" "-r" (expand-file-name apk))
+           :name "android-adb-install"
+           :buffer buffer
+           :sentinel
+           (lambda (process _event)
+             (when (memq (process-status process) '(exit signal))
+               (when callback
+                 (funcall callback
+                          (process-exit-status process)
+                          (with-current-buffer (process-buffer process)
+                            (buffer-string)))))))))
+    process))
+
 (defun android-adb-parse-devices (output)
   "Parse `adb devices -l' OUTPUT into device plists.
 Each device has :serial and :state; optional keys include :model, :product,
