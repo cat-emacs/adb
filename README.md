@@ -22,6 +22,13 @@ package-vc as well; their package metadata does not register a VC source.
 - `android-adb-start`: asynchronous process, owned by the caller.
 - `android-adb-install-apk`: asynchronous `adb install -r` with a completion
   callback receiving exit status and output.
+- `android-adb-launch-package`, `android-adb-force-stop`,
+  `android-adb-uninstall`, `android-adb-clear-package-data`: application
+  lifecycle operations.
+- `android-adb-push` / `android-adb-pull`: asynchronous file transfer.
+- `android-adb-forward` / `android-adb-reverse`: port mapping.
+- `android-adb-getprop`, `android-adb-device-info`, `android-adb-battery`, and
+  `android-adb-display-size`: common device queries.
 - `android-adb-query`: bounded short query; signals on failure or timeout.
 - `android-adb-parse-devices` / `android-adb-devices`: device plists, including
   offline and unauthorized states; an optional flag filters to usable devices.
@@ -29,6 +36,7 @@ package-vc as well; their package metadata does not register a VC source.
   and selection of a usable serial.
 - `android-adb-transient.el` provides `M-x android-adb`: a Transient menu for
   device selection/listing, adb server management, reconnect, APK installation,
+  app lifecycle, file transfer, port forwarding/reverse, device information,
   and an adb shell command. Loading `android-adb.el` alone does not load
   Transient.
 

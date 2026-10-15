@@ -108,29 +108,127 @@ operations should use `android-adb-start' instead."
       (when (and process (process-live-p process)) (delete-process process))
       (kill-buffer buffer))))
 
+(defun android-adb--start-operation (serial arguments name &optional callback)
+  "Start adb ARGUMENTS for SERIAL under NAME and return its process.
+CALLBACK receives the exit status and complete output when the process exits.
+The output buffer is named from NAME and remains available to the caller."
+  (let ((buffer (get-buffer-create (format "*android-adb-%s*" name))))
+    (with-current-buffer buffer (let ((inhibit-read-only t)) (erase-buffer)))
+    (android-adb-start
+     serial arguments
+     :name (format "android-adb-%s" name)
+     :buffer buffer
+     :sentinel
+     (lambda (process _event)
+       (when (memq (process-status process) '(exit signal))
+         (when callback
+           (funcall callback
+                    (process-exit-status process)
+                    (with-current-buffer (process-buffer process)
+                      (buffer-string)))))))))
+
 (defun android-adb-install-apk (serial apk &optional callback)
   "Install APK on SERIAL asynchronously and return its process.
-Use `-r' to replace an existing installation.  CALLBACK, when non-nil, is
-called with the process exit status and complete output after adb exits."
+Use `-r' to replace an existing installation.  CALLBACK receives the process
+exit status and complete output after adb exits."
   (unless (file-readable-p apk)
     (user-error "Cannot read APK: %s" apk))
-  (let* ((buffer (get-buffer-create
-                  (format "*android-adb-install %s*"
-                          (file-name-nondirectory apk))))
-         (process
-          (android-adb-start
-           serial (list "install" "-r" (expand-file-name apk))
-           :name "android-adb-install"
-           :buffer buffer
-           :sentinel
-           (lambda (process _event)
-             (when (memq (process-status process) '(exit signal))
-               (when callback
-                 (funcall callback
-                          (process-exit-status process)
-                          (with-current-buffer (process-buffer process)
-                            (buffer-string)))))))))
-    process))
+  (android-adb--start-operation
+   serial (list "install" "-r" (expand-file-name apk))
+   (format "install %s" (file-name-nondirectory apk)) callback))
+
+(defun android-adb-launch-package (serial package &optional activity callback)
+  "Launch PACKAGE on SERIAL asynchronously and return its process.
+When ACTIVITY is non-nil, launch the explicit component PACKAGE/ACTIVITY;
+otherwise use the Android launcher category.  CALLBACK receives status/output."
+  (let ((arguments
+         (if activity
+             (list "shell" "am" "start" "-n"
+                   (concat package "/" activity))
+           (list "shell" "monkey" "-p" package
+                 "-c" "android.intent.category.LAUNCHER" "1"))))
+    (android-adb--start-operation serial arguments "launch" callback)))
+
+(defun android-adb-force-stop (serial package &optional callback)
+  "Force-stop PACKAGE on SERIAL asynchronously and return its process."
+  (android-adb--start-operation
+   serial (list "shell" "am" "force-stop" package) "force-stop" callback))
+
+(defun android-adb-uninstall (serial package &optional callback)
+  "Uninstall PACKAGE from SERIAL asynchronously and return its process."
+  (android-adb--start-operation
+   serial (list "uninstall" package) "uninstall" callback))
+
+(defun android-adb-clear-package-data (serial package &optional callback)
+  "Clear PACKAGE data on SERIAL asynchronously and return its process."
+  (android-adb--start-operation
+   serial (list "shell" "pm" "clear" package) "clear-package" callback))
+
+(defun android-adb-push (serial local remote &optional callback)
+  "Push LOCAL to REMOTE on SERIAL asynchronously and return its process."
+  (unless (file-readable-p local)
+    (user-error "Cannot read local file: %s" local))
+  (android-adb--start-operation
+   serial (list "push" (expand-file-name local) remote) "push" callback))
+
+(defun android-adb-pull (serial remote local &optional callback)
+  "Pull REMOTE to LOCAL on SERIAL asynchronously and return its process."
+  (android-adb--start-operation
+   serial (list "pull" remote (expand-file-name local)) "pull" callback))
+
+(defun android-adb-forward (serial local remote)
+  "Forward LOCAL to REMOTE on SERIAL and return adb output."
+  (android-adb-query serial "forward" local remote))
+
+(defun android-adb-reverse (serial remote local)
+  "Reverse REMOTE to LOCAL on SERIAL and return adb output."
+  (android-adb-query serial "reverse" remote local))
+
+(defun android-adb-list-forward (&optional serial)
+  "Return adb forward rules for SERIAL, or all devices when SERIAL is nil."
+  (android-adb-query serial "forward" "--list"))
+
+(defun android-adb-list-reverse (&optional serial)
+  "Return adb reverse rules for SERIAL, or all devices when SERIAL is nil."
+  (android-adb-query serial "reverse" "--list"))
+
+(defun android-adb-remove-forward (serial local)
+  "Remove LOCAL forward rule from SERIAL."
+  (android-adb-query serial "forward" "--remove" local))
+
+(defun android-adb-remove-reverse (serial remote)
+  "Remove REMOTE reverse rule from SERIAL."
+  (android-adb-query serial "reverse" "--remove" remote))
+
+(defun android-adb-getprop (serial property)
+  "Return PROPERTY from SERIAL's `getprop' output."
+  (string-trim (android-adb-query serial "shell" "getprop" property)))
+
+(defun android-adb-device-info (serial)
+  "Return common build properties for SERIAL as a plist."
+  (list :serial serial
+        :model (android-adb-getprop serial "ro.product.model")
+        :manufacturer (android-adb-getprop serial "ro.product.manufacturer")
+        :android-version (android-adb-getprop serial "ro.build.version.release")
+        :sdk (android-adb-getprop serial "ro.build.version.sdk")
+        :abi (android-adb-getprop serial "ro.product.cpu.abi")))
+
+(defun android-adb-battery (serial)
+  "Return battery information for SERIAL as a plist."
+  (let ((output (android-adb-query serial "shell" "dumpsys" "battery"))
+        result)
+    (dolist (line (split-string output "\\n" t))
+      (when (string-match "^[[:space:]]*\\([^:]+\\):[[:space:]]*\\(.+?\\)[[:space:]]*$" line)
+        (setq result (plist-put result
+                                (intern (concat ":" (string-trim (match-string 1 line))))
+                                (string-trim (match-string 2 line))))))
+    result))
+
+(defun android-adb-display-size (serial)
+  "Return the physical display size reported by SERIAL, or nil."
+  (let ((output (android-adb-query serial "shell" "wm" "size")))
+    (when (string-match "Physical size:[[:space:]]*\\([0-9]+x[0-9]+\\)" output)
+      (match-string 1 output))))
 
 (defun android-adb-parse-devices (output)
   "Parse `adb devices -l' OUTPUT into device plists.

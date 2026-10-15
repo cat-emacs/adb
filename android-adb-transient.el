@@ -65,6 +65,22 @@
   (let ((output (android-adb-query android-adb-default-device-serial "reconnect")))
     (android-adb--buffer-output "*android-adb-reconnect*" 0 output)))
 
+(defun android-adb--read-package ()
+  "Read an Android application package name."
+  (read-string "Package: "))
+
+(defun android-adb--read-remote-path ()
+  "Read an Android device path."
+  (read-string "Remote path: "))
+
+(defun android-adb--report-operation (label status output)
+  "Report LABEL operation result from STATUS and OUTPUT."
+  (if (zerop status)
+      (message "android-adb: %s completed" label)
+    (android-adb--buffer-output (format "*android-adb-%s*" label)
+                                status output)
+    (message "android-adb: %s failed with status %s" label status)))
+
 (defun android-adb-install-apk-file (apk)
   "Install APK selected by the user on the default Android device."
   (interactive (list (read-file-name "APK: " nil nil t nil
@@ -78,11 +94,80 @@
        (if (and (zerop status) (string-match-p "Success" output))
            (message "android-adb: installed %s on %s"
                     (file-name-nondirectory apk) serial)
-         (android-adb--buffer-output
-          (format "*android-adb-install %s*"
-                  (file-name-nondirectory apk))
-          status output)
-         (message "android-adb: install failed with status %s" status))))))
+         (android-adb--report-operation
+          (format "install-%s" (file-name-nondirectory apk)) status output))))))
+
+(defun android-adb-launch-package-command (package &optional activity)
+  "Launch PACKAGE, optionally using ACTIVITY, on the default device."
+  (interactive (list (android-adb--read-package)
+                     (read-string "Activity (empty for launcher): ")))
+  (let ((serial (android-adb-read-device)))
+    (android-adb-launch-package
+     serial package (unless (string-empty-p activity) activity)
+     (lambda (status output)
+       (android-adb--report-operation "launch" status output)))))
+
+(defun android-adb-force-stop-command (package)
+  "Force-stop PACKAGE on the default device."
+  (interactive (list (android-adb--read-package)))
+  (android-adb-force-stop
+   (android-adb-read-device) package
+   (lambda (status output) (android-adb--report-operation "force-stop" status output))))
+
+(defun android-adb-uninstall-package (package)
+  "Uninstall PACKAGE from the default device."
+  (interactive (list (android-adb--read-package)))
+  (android-adb-uninstall
+   (android-adb-read-device) package
+   (lambda (status output) (android-adb--report-operation "uninstall" status output))))
+
+(defun android-adb-clear-package (package)
+  "Clear data for PACKAGE on the default device."
+  (interactive (list (android-adb--read-package)))
+  (android-adb-clear-package-data
+   (android-adb-read-device) package
+   (lambda (status output) (android-adb--report-operation "clear-package" status output))))
+
+(defun android-adb-push-file (local remote)
+  "Push LOCAL to REMOTE on the default device."
+  (interactive (list (read-file-name "Local file: ")
+                     (android-adb--read-remote-path)))
+  (android-adb-push
+   (android-adb-read-device) local remote
+   (lambda (status output) (android-adb--report-operation "push" status output))))
+
+(defun android-adb-pull-file (remote local)
+  "Pull REMOTE to LOCAL."
+  (interactive (list (android-adb--read-remote-path)
+                     (read-file-name "Local destination: ")))
+  (android-adb-pull
+   (android-adb-read-device) remote local
+   (lambda (status output) (android-adb--report-operation "pull" status output))))
+
+(defun android-adb-forward-port (local remote)
+  "Forward LOCAL to REMOTE on the default device."
+  (interactive "sLocal address (e.g. tcp:8080): \nsRemote address (e.g. tcp:8080): ")
+  (message "android-adb: %s" (android-adb-forward (android-adb-read-device) local remote)))
+
+(defun android-adb-reverse-port (remote local)
+  "Reverse REMOTE to LOCAL on the default device."
+  (interactive "sRemote address (e.g. tcp:8080): \nsLocal address (e.g. tcp:8080): ")
+  (message "android-adb: %s" (android-adb-reverse (android-adb-read-device) remote local)))
+
+(defun android-adb-show-device-info ()
+  "Display common properties for the default device."
+  (interactive)
+  (let* ((serial (android-adb-read-device))
+         (info (android-adb-device-info serial)))
+    (android-adb--buffer-output "*android-adb-device-info*" 0
+                                (format "%S" info))))
+
+(defun android-adb-show-battery ()
+  "Display battery information for the default device."
+  (interactive)
+  (let ((serial (android-adb-read-device)))
+    (android-adb--buffer-output "*android-adb-battery*" 0
+                                (format "%S" (android-adb-battery serial)))))
 
 (defun android-adb-shell (command)
   "Run COMMAND through adb shell on the default device.
@@ -114,8 +199,21 @@ through a host shell."
     ("S" "Start server" android-adb-start-server)
     ("K" "Kill server" android-adb-kill-server)
     ("r" "Reconnect" android-adb-reconnect)]
-   ["Command"
+   ["App"
     ("i" "Install APK" android-adb-install-apk-file)
+    ("l" "Launch package" android-adb-launch-package-command)
+    ("k" "Force-stop package" android-adb-force-stop-command)
+    ("u" "Uninstall package" android-adb-uninstall-package)
+    ("c" "Clear package data" android-adb-clear-package)]
+   ["Files"
+    ("p" "Push file" android-adb-push-file)
+    ("P" "Pull file" android-adb-pull-file)]
+   ["Network"
+    ("f" "Forward port" android-adb-forward-port)
+    ("r" "Reverse port" android-adb-reverse-port)]
+   ["Info"
+    ("I" "Device info" android-adb-show-device-info)
+    ("b" "Battery" android-adb-show-battery)
     ("x" "Run shell command" android-adb-shell)]])
 
 (provide 'android-adb-transient)

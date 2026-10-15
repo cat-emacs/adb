@@ -19,6 +19,23 @@
   (should-error (android-adb-install-apk "SER1" "/missing/test.apk")
                 :type 'user-error))
 
+(ert-deftest android-adb-app-and-file-operations-build-commands ()
+  (let ((apk (make-temp-file "android-adb-test" nil ".apk")) commands)
+    (unwind-protect
+        (cl-letf (((symbol-function 'android-adb-start)
+                   (lambda (serial arguments &rest _options)
+                     (push (list serial arguments) commands)
+                     'fake-process)))
+          (android-adb-launch-package "SER1" "com.example.app")
+          (android-adb-force-stop "SER1" "com.example.app")
+          (android-adb-uninstall "SER1" "com.example.app")
+          (android-adb-clear-package-data "SER1" "com.example.app")
+          (android-adb-push "SER1" apk "/data/local/tmp/app.apk")
+          (android-adb-pull "SER1" "/data/local/tmp/app.apk" "/tmp/app.apk")
+          (should (= (length commands) 6))
+          (should (member '("SER1" ("uninstall" "com.example.app")) commands)))
+      (delete-file apk))))
+
 (ert-deftest android-adb-parser-keeps-device-states ()
   (should
    (equal (android-adb-parse-devices
