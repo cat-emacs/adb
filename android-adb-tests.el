@@ -38,7 +38,21 @@
              (lambda (&optional _)
                '((:serial "OFF" :state offline)
                  (:serial "OK" :state device :model "Pixel")))))
-    (should (equal (android-adb-read-device) "OK"))))
+    (let ((android-adb-default-device-serial nil))
+      (should (equal (android-adb-read-device) "OK")))))
+
+(ert-deftest android-adb-read-device-prefers-default-device ()
+  (let ((android-adb-default-device-serial "OK"))
+    (cl-letf (((symbol-function 'android-adb-devices)
+               (lambda (&optional _)
+                 '((:serial "OK" :state device)
+                   (:serial "OTHER" :state device)))))
+      (should (equal (android-adb-read-device) "OK")))))
+
+(ert-deftest android-adb-transient-is-available ()
+  (should (commandp #'android-adb))
+  (should (transient-get-suffix 'android-adb "s"))
+  (should (transient-get-suffix 'android-adb "x")))
 
 (ert-deftest android-adb-read-device-reports-authorization ()
   (cl-letf (((symbol-function 'android-adb-devices)

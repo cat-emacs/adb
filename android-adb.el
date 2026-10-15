@@ -1,7 +1,7 @@
 ;;; android-adb.el --- Android device communication -*- lexical-binding: t; -*-
 
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+;; Package-Requires: ((emacs "28.1") (transient "0.3.0"))
 ;; URL: https://github.com/cat-emacs/android-adb
 ;; Keywords: tools processes
 
@@ -25,6 +25,7 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+(require 'transient)
 
 (defgroup android-adb nil
   "Android device communication."
@@ -43,6 +44,11 @@
 (defcustom android-adb-query-timeout 5
   "Maximum seconds to wait for a short adb query."
   :type 'number
+  :group 'android-adb)
+
+(defcustom android-adb-default-device-serial nil
+  "Default device serial used by adb commands and the `android-adb' menu."
+  :type '(choice (const nil) string)
   :group 'android-adb)
 
 (defun android-adb-executable ()
@@ -141,12 +147,20 @@ With AVAILABLE-ONLY non-nil, include only devices in the `device' state."
 
 (defun android-adb-read-device (&optional prompt)
   "Return a usable device serial, prompting with PROMPT when necessary.
+A configured `android-adb-default-device-serial' is used when it is online.
 A sole usable device is selected automatically.  If none is usable, report
 connected device states rather than treating unauthorized devices as absent."
   (let* ((all (android-adb-devices))
          (devices (seq-filter (lambda (device)
-                                (eq (plist-get device :state) 'device)) all)))
+                                (eq (plist-get device :state) 'device)) all))
+         (default (and android-adb-default-device-serial
+                       (seq-find
+                        (lambda (device)
+                          (equal android-adb-default-device-serial
+                                 (plist-get device :serial)))
+                        devices))))
     (cond
+     (default (plist-get default :serial))
      ((null devices)
       (user-error "No usable Android device%s"
                   (if all
@@ -155,12 +169,96 @@ connected device states rather than treating unauthorized devices as absent."
                                        (format "%s: %s" (plist-get device :serial)
                                                (plist-get device :state))) all ", "))
                     " connected")))
-     ((= (length devices) 1) (plist-get (car devices) :serial))
+     ((= (length devices) 1)
+      (setq android-adb-default-device-serial
+            (plist-get (car devices) :serial)))
      (t (let* ((choices (mapcar (lambda (device)
                                  (cons (android-adb-device-label device)
                                        (plist-get device :serial))) devices))
-               (choice (completing-read (or prompt "Android device: ") choices nil t)))
-          (cdr (assoc choice choices)))))))
+               (choice (completing-read (or prompt "Android device: ") choices nil t
+                                        nil nil
+                                        (and android-adb-default-device-serial
+                                             (android-adb-device-label
+                                              (list :serial android-adb-default-device-serial))))))
+          (setq android-adb-default-device-serial (cdr (assoc choice choices))))))))
+
+(defun android-adb--buffer-output (name status output)
+  "Display STATUS and OUTPUT in a special buffer named NAME."
+  (with-current-buffer (get-buffer-create name)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert output)
+      (unless (string-suffix-p "\n" output) (insert "\n"))
+      (insert (format "\nExited with status %s\n" status)))
+    (special-mode)
+    (pop-to-buffer (current-buffer))))
+
+(defun android-adb-list-devices ()
+  "Display all devices reported by adb."
+  (interactive)
+  (let ((output (android-adb-query nil "devices" "-l")))
+    (android-adb--buffer-output "*android-adb-devices*" 0 output)))
+
+(defun android-adb-select-device (&optional serial)
+  "Set the default device to SERIAL, or prompt for one."
+  (interactive)
+  (setq android-adb-default-device-serial
+        (or serial (android-adb-read-device "Default Android device: ")))
+  (message "android-adb: default device is %s" android-adb-default-device-serial))
+
+(defun android-adb--server-command (command)
+  "Run adb server COMMAND and display its output."
+  (let ((output (android-adb-query nil command)))
+    (android-adb--buffer-output "*android-adb-server*" 0 output)))
+
+(defun android-adb-start-server ()
+  "Start the adb server and display its output."
+  (interactive)
+  (android-adb--server-command "start-server"))
+
+(defun android-adb-kill-server ()
+  "Stop the adb server and display its output."
+  (interactive)
+  (android-adb--server-command "kill-server"))
+
+(defun android-adb-reconnect ()
+  "Reconnect the default device, or all devices when none is selected."
+  (interactive)
+  (let ((output (android-adb-query android-adb-default-device-serial "reconnect")))
+    (android-adb--buffer-output "*android-adb-reconnect*" 0 output)))
+
+(defun android-adb-shell (command)
+  "Run COMMAND through adb shell on the default device.
+COMMAND is split into arguments using `split-string-and-unquote', not passed
+through a host shell."
+  (interactive "sAdb shell command: ")
+  (let* ((serial (android-adb-read-device))
+         (arguments (append '("shell") (split-string-and-unquote command)))
+         (buffer (get-buffer-create "*android-adb-shell*"))
+         (process (android-adb-start
+                   serial arguments
+                   :name "android-adb-shell"
+                   :buffer buffer
+                   :sentinel
+                   (lambda (process _event)
+                     (when (memq (process-status process) '(exit signal))
+                       (message "android-adb: shell exited with status %s"
+                                (process-exit-status process)))))))
+    (display-buffer buffer)
+    process))
+
+;;;###autoload (autoload 'android-adb "android-adb" nil t)
+(transient-define-prefix android-adb ()
+  "Discover and control Android devices through adb."
+  [["Device"
+    ("s" "Select default device" android-adb-select-device)
+    ("l" "List devices" android-adb-list-devices)]
+   ["Server"
+    ("S" "Start server" android-adb-start-server)
+    ("K" "Kill server" android-adb-kill-server)
+    ("r" "Reconnect" android-adb-reconnect)]
+   ["Command"
+    ("x" "Run shell command" android-adb-shell)]])
 
 (provide 'android-adb)
 ;;; android-adb.el ends here

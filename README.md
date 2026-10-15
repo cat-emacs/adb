@@ -24,7 +24,11 @@ package-vc as well; their package metadata does not register a VC source.
   offline and unauthorized states; an optional flag filters to usable devices.
 - `android-adb-device-label` / `android-adb-read-device`: unambiguous labels
   and selection of a usable serial.
+- `M-x android-adb`: Transient menu for device selection/listing, adb server
+  management, reconnect, and an adb shell command.
 
+Set `android-adb-default-device-serial` to avoid repeated selection prompts.
+The Transient menu uses the same default serial as the programmatic interface.
 Set `android-adb-program` for an explicit executable, or
 `android-adb-sdk-directory` for SDK fallback. Queries default to a five-second
 timeout. Commands use argument vectors, not shell command strings.
