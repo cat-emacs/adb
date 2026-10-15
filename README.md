@@ -1,7 +1,8 @@
 # android-adb
 
 Small Emacs library for Android device communication. No Android project,
-Gradle, or minor mode is required. Requires Emacs 28.1 and an installed adb.
+Gradle, or minor mode is required. The core library requires only Emacs 28.1;
+its optional Transient UI requires Transient 0.3.0 and an installed adb.
 
 ## Installation
 
@@ -24,8 +25,9 @@ package-vc as well; their package metadata does not register a VC source.
   offline and unauthorized states; an optional flag filters to usable devices.
 - `android-adb-device-label` / `android-adb-read-device`: unambiguous labels
   and selection of a usable serial.
-- `M-x android-adb`: Transient menu for device selection/listing, adb server
-  management, reconnect, and an adb shell command.
+- `android-adb-transient.el` provides `M-x android-adb`: a Transient menu for
+  device selection/listing, adb server management, reconnect, and an adb shell
+  command. Loading `android-adb.el` alone does not load Transient.
 
 Set `android-adb-default-device-serial` to avoid repeated selection prompts.
 The Transient menu uses the same default serial as the programmatic interface.

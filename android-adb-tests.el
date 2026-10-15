@@ -49,11 +49,6 @@
                    (:serial "OTHER" :state device)))))
       (should (equal (android-adb-read-device) "OK")))))
 
-(ert-deftest android-adb-transient-is-available ()
-  (should (commandp #'android-adb))
-  (should (transient-get-suffix 'android-adb "s"))
-  (should (transient-get-suffix 'android-adb "x")))
-
 (ert-deftest android-adb-read-device-reports-authorization ()
   (cl-letf (((symbol-function 'android-adb-devices)
              (lambda (&optional _) '((:serial "SER1" :state unauthorized)))))
