@@ -45,8 +45,9 @@ package-vc as well; their package metadata does not register a VC source.
   device selection/listing, adb server management, reconnect, APK installation,
   app lifecycle, file transfer, port forwarding/reverse, network pairing,
   reboot/TCP/USB switching, bugreports, device information, and an adb shell
-  command. Interactive prompts select devices, APKs, files, packages, hosts,
-  and ports. Loading `android-adb.el` alone does not load Transient.
+  command. Its five menu groups are Device, App, Files, System, and Info.
+  Interactive prompts select devices, APKs, files, packages, hosts, and ports.
+  Loading `android-adb.el` alone does not load Transient.
 
 Set `android-adb-default-device-serial` to avoid repeated selection prompts.
 The Transient menu uses the same default serial as the programmatic interface.

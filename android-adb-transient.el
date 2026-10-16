@@ -271,34 +271,30 @@ through a host shell."
   "Discover and control Android devices through adb."
   [["Device"
     ("s" "Select default device" android-adb-select-device)
-    ("l" "List devices" android-adb-list-devices)]
-   ["Server"
+    ("l" "List devices" android-adb-list-devices)
     ("S" "Start server" android-adb-start-server)
     ("K" "Kill server" android-adb-kill-server)
-    ("r" "Reconnect" android-adb-reconnect)]
-   ["Network"
+    ("r" "Reconnect" android-adb-reconnect)
     ("c" "Connect" android-adb-connect-host)
     ("d" "Disconnect" android-adb-disconnect-host)
-    ("p" "Pair" android-adb-pair-host)]
-   ["System"
-    ("R" "Reboot" android-adb-reboot-device)
-    ("t" "TCP/IP" android-adb-switch-tcpip)
-    ("U" "USB" android-adb-switch-usb)
+    ("p" "Pair" android-adb-pair-host)
     ("w" "Wait for device" android-adb-wait-device)]
    ["App"
     ("i" "Install APK" android-adb-install-apk-file)
+    ("m" "Install multiple APKs" android-adb-install-multiple-files)
     ("l" "Launch package" android-adb-launch-package-command)
     ("k" "Force-stop package" android-adb-force-stop-command)
     ("u" "Uninstall package" android-adb-uninstall-package)
     ("c" "Clear package data" android-adb-clear-package)]
    ["Files"
     ("p" "Push file" android-adb-push-file)
-    ("P" "Pull file" android-adb-pull-file)
-    ("m" "Install multiple APKs" android-adb-install-multiple-files)]
-   ["Ports"
+    ("P" "Pull file" android-adb-pull-file)]
+   ["System"
+    ("R" "Reboot" android-adb-reboot-device)
+    ("t" "TCP/IP" android-adb-switch-tcpip)
+    ("U" "USB" android-adb-switch-usb)
     ("f" "Forward port" android-adb-forward-port)
-    ("r" "Reverse port" android-adb-reverse-port)]
-   ["Debug"
+    ("r" "Reverse port" android-adb-reverse-port)
     ("B" "Bugreport" android-adb-create-bugreport)]
    ["Info"
     ("I" "Device info" android-adb-show-device-info)
