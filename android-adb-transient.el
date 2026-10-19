@@ -178,11 +178,28 @@
   (interactive (list (android-adb--read-host)))
   (message "android-adb: %s" (android-adb-connect host)))
 
+(defun android-adb--read-disconnect-host ()
+  "Read a connected TCP/IP host, or empty to disconnect all.
+Candidates come from the current adb device list."
+  (let* ((serials
+          (delete-dups
+           (delq nil
+                 (mapcar
+                  (lambda (device)
+                    (let ((serial (plist-get device :serial)))
+                      (and (string-match-p ":[0-9]+\\'" serial) serial)))
+                  (android-adb-devices)))))
+         (default (and (member android-adb-default-device-serial serials)
+                       android-adb-default-device-serial)))
+    (completing-read "Disconnect host (empty for all): " serials nil nil
+                     default)))
+
 (defun android-adb-disconnect-host (host)
   "Disconnect HOST, or all hosts when empty."
-  (interactive (list (let ((value (android-adb--read-host)))
-                       (unless (string-empty-p value) value))))
-  (message "android-adb: %s" (android-adb-disconnect host)))
+  (interactive (list (android-adb--read-disconnect-host)))
+  (message "android-adb: %s"
+           (android-adb-disconnect
+            (unless (string-empty-p host) host))))
 
 (defun android-adb-pair-host (host code)
   "Pair with HOST using CODE."
