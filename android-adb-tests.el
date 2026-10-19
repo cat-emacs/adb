@@ -55,6 +55,15 @@
                          commands)))
       (delete-file apk))))
 
+(ert-deftest android-adb-packages-parses-and-sorts-package-list ()
+  (cl-letf (((symbol-function 'android-adb-query)
+             (lambda (_serial &rest _arguments)
+               "package:zeta
+package:alpha
+package:alpha
+")))
+    (should (equal (android-adb-packages "SER1") '("alpha" "zeta")))))
+
 (ert-deftest android-adb-parser-keeps-device-states ()
   (should
    (equal (android-adb-parse-devices

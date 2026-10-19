@@ -66,8 +66,10 @@
     (android-adb--buffer-output "*android-adb-reconnect*" 0 output)))
 
 (defun android-adb--read-package ()
-  "Read an Android application package name."
-  (read-string "Package: "))
+  "Read an installed Android package from the default device."
+  (let* ((serial (android-adb-read-device))
+         (packages (android-adb-packages serial)))
+    (completing-read "Package: " packages nil nil)))
 
 (defun android-adb--read-remote-path ()
   "Read an Android device path."

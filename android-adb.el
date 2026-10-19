@@ -100,6 +100,8 @@ operations should use `android-adb-start' instead."
             (when (process-live-p process)
               (user-error "Adb query timed out after %s seconds"
                           android-adb-query-timeout)))
+          ;; Emacs may deliver the final stdout chunk after the exit event.
+          (accept-process-output process 0)
           (let ((output (with-current-buffer buffer (buffer-string))))
             (unless (and (eq (process-status process) 'exit)
                          (zerop (process-exit-status process)))
@@ -200,6 +202,22 @@ otherwise use the Android launcher category.  CALLBACK receives status/output."
   "Remove REMOTE reverse rule from SERIAL."
   (android-adb-query serial "reverse" "--remove" remote))
 
+(defun android-adb-packages (serial)
+  "Return installed application package names for SERIAL.
+The result is sorted and excludes the `package:' prefix from `pm list packages'."
+  (sort
+   (delete-dups
+    (delq nil
+          (mapcar
+           (lambda (line)
+             (when (string-match "^package:\\(.+\\)$" line)
+               (match-string 1 line)))
+           (split-string
+            (android-adb-query serial "shell" "pm" "list" "packages")
+            "
+" t))))
+   #'string<))
+
 (defun android-adb-getprop (serial property)
   "Return PROPERTY from SERIAL's `getprop' output."
   (string-trim (android-adb-query serial "shell" "getprop" property)))
@@ -259,7 +277,8 @@ STATE defaults to `device'.  CALLBACK receives status and output."
    serial (list (format "wait-for-%s" (or state "device"))) "wait-for-device" callback))
 
 (defun android-adb-reboot (serial &optional mode callback)
-  "Reboot SERIAL, optionally into MODE, asynchronously."
+  "Reboot SERIAL, optionally into MODE, asynchronously.
+CALLBACK receives status and output."
   (android-adb--start-operation
    serial (if mode (list "reboot" mode) '("reboot")) "reboot" callback))
 
