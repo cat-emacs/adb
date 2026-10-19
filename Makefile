@@ -17,19 +17,19 @@ install-deps:
 
 lint:
 	$(BATCH) $(ARCHIVES) $(LOAD_PATH) \
-	  --eval '(checkdoc-file "android-adb.el")' \
-	  --eval '(checkdoc-file "android-adb-transient.el")' \
-	  --eval '(with-temp-buffer (insert-file-contents "android-adb.el") (emacs-lisp-mode) (check-parens))' \
-	  --eval '(with-temp-buffer (insert-file-contents "android-adb-transient.el") (emacs-lisp-mode) (check-parens))'
+	  --eval '(checkdoc-file "adb.el")' \
+	  --eval '(checkdoc-file "adb-transient.el")' \
+	  --eval '(with-temp-buffer (insert-file-contents "adb.el") (emacs-lisp-mode) (check-parens))' \
+	  --eval '(with-temp-buffer (insert-file-contents "adb-transient.el") (emacs-lisp-mode) (check-parens))'
 
 build:
 	$(BATCH) $(ARCHIVES) $(LOAD_PATH) --eval '(setq byte-compile-error-on-warn t)' \
-	  -f batch-byte-compile android-adb.el android-adb-transient.el
+	  -f batch-byte-compile adb.el adb-transient.el
 
 test:
 	$(BATCH) $(ARCHIVES) $(LOAD_PATH) \
-	  -l android-adb.el -l android-adb-tests.el \
-	  -l android-adb-transient.el -l android-adb-transient-tests.el \
+	  -l adb.el -l adb-tests.el \
+	  -l adb-transient.el -l adb-transient-tests.el \
 	  -f ert-run-tests-batch-and-exit
 
 clean:
