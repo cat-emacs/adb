@@ -48,15 +48,14 @@ its consumers have been updated; do not load both implementations.
   offline and unauthorized states; an optional flag filters to usable devices.
 - `adb-device-label` / `adb-read-device`: unambiguous labels
   and selection of a usable serial.
-- `adb-transient.el` provides `M-x adb`: a Transient menu for
-  device selection/listing, adb server management, reconnect, APK installation,
-  app lifecycle, file transfer, port forwarding/reverse, network pairing,
-  reboot/TCP/USB switching, bugreports, device information, and an adb shell
-  command. Its five menu groups are Device, App, Files, System, and Info.
-  Interactive prompts select devices, installed packages, APKs, files, hosts, and
-  ports; package actions query `pm list packages`, and disconnect offers current
-  TCP/IP devices as candidates.
-  Loading `adb.el` alone does not load Transient.
+- `adb-transient.el` provides `M-x adb`. Its groups are Device, Network,
+  App, Files, and System, and every top-level key is unique. `a` opens the
+  activity manager menu and `p` opens the package manager menu. Those menus
+  expose the common `am` and `pm` actions together with their usual options:
+  intent fields, launch flags, user, package filters, permissions, and
+  keep-data or cache-only switches. Package, component, permission, and user
+  prompts offer candidates. APK installation remains an adb operation beside
+  the shell menus. Loading `adb.el` alone does not load Transient.
 
 Set `adb-default-device-serial` to avoid repeated selection prompts.
 The Transient menu uses the same default serial as the programmatic interface.
