@@ -129,14 +129,17 @@ The output buffer is named from NAME and remains available to the caller."
                     (with-current-buffer (process-buffer process)
                       (buffer-string)))))))))
 
-(defun adb-install-apk (serial apk &optional callback)
+(cl-defun adb-install-apk (serial apk &optional callback &key (replace t))
   "Install APK on SERIAL asynchronously and return its process.
-Use `-r' to replace an existing installation.  CALLBACK receives the process
-exit status and complete output after adb exits."
+REPLACE, which defaults to non-nil, passes `-r' so an existing installation
+of the same package is replaced and its data is kept.  CALLBACK receives the
+process exit status and complete output after adb exits."
   (unless (file-readable-p apk)
     (user-error "Cannot read APK: %s" apk))
   (adb--start-operation
-   serial (list "install" "-r" (expand-file-name apk))
+   serial (append '("install")
+                  (and replace '("-r"))
+                  (list (expand-file-name apk)))
    (format "install %s" (file-name-nondirectory apk)) callback))
 
 (defun adb-launch-package (serial package &optional activity callback)
@@ -293,14 +296,17 @@ CALLBACK receives status and output."
 CALLBACK receives status and output."
   (adb--start-operation serial '("usb") "usb" callback))
 
-(defun adb-install-multiple (serial apks &optional callback)
+(cl-defun adb-install-multiple (serial apks &optional callback &key (replace t))
   "Install APKS atomically on SERIAL and return its process.
-APKS is a non-empty list of readable APK paths.  CALLBACK receives status
-and output."
+APKS is a non-empty list of readable split APK paths.  REPLACE, which
+defaults to non-nil, passes `-r' so an existing installation is replaced.
+CALLBACK receives status and output."
   (unless (and apks (seq-every-p #'file-readable-p apks))
     (user-error "Select one or more readable APK files"))
   (adb--start-operation
-   serial (append '("install-multiple" "-r") (mapcar #'expand-file-name apks))
+   serial (append '("install-multiple")
+                  (and replace '("-r"))
+                  (mapcar #'expand-file-name apks))
    "install-multiple" callback))
 
 (defun adb-bugreport (serial destination &optional callback)

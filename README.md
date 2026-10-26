@@ -27,8 +27,9 @@ its consumers have been updated; do not load both implementations.
   SDK / ANDROID_HOME / ANDROID_SDK_ROOT platform-tools.
 - `adb-command`: argument vector for a serial and command arguments.
 - `adb-start`: asynchronous process, owned by the caller.
-- `adb-install-apk`: asynchronous `adb install -r` with a completion
-  callback receiving exit status and output.
+- `adb-install-apk`: asynchronous `adb install`, with `-r` by default so an
+  existing installation is replaced and its data is kept. Pass `:replace nil`
+  to omit that flag. The completion callback receives exit status and output.
 - `adb-launch-package`, `adb-force-stop`,
   `adb-uninstall`, `adb-clear-package-data`: application
   lifecycle operations.
@@ -38,8 +39,11 @@ its consumers have been updated; do not load both implementations.
 - `adb-get-state`, `adb-get-serialno`,
   `adb-wait-for-device`, `adb-reboot`, `adb-tcpip`, and
   `adb-usb`: device state and transport control.
-- `adb-install-multiple` and `adb-bugreport`: multi-APK
-  installation and bug report generation.
+- `adb-install-multiple` and `adb-bugreport`: one split-APK session
+  and bug report generation. `adb-install-multiple` also replaces an existing
+  installation unless `:replace` is nil. In the menu, `-r` selects that flag
+  for both `i` and `m`; it is enabled by default. `C-u i` installs each
+  selected APK separately, while `m` keeps `adb install-multiple`.
 - `adb-forward` / `adb-reverse`: port mapping.
 - `adb-getprop`, `adb-device-info`, `adb-battery`, and
   `adb-display-size`: common device queries.

@@ -135,21 +135,36 @@ to free text."
                                 status output)
     (message "adb: %s failed with status %s" label status)))
 
+(defun adb--install-replace-p ()
+  "Return non-nil when the adb menu's replace switch is enabled."
+  (member "-r" (transient-args 'adb)))
+
 (defun adb-install-apk-file (apk)
-  "Install APK selected by the user on the default Android device."
-  (interactive (list (read-file-name "APK: " nil nil t nil
-                                      (lambda (file)
-                                        (or (file-directory-p file)
-                                            (string-match-p "\\.apk\\'" file))))))
-  (let ((serial (adb-read-device)))
-    (adb-install-apk
-     serial apk
-     (lambda (status output)
-       (if (and (zerop status) (string-match-p "Success" output))
-           (message "adb: installed %s on %s"
-                    (file-name-nondirectory apk) serial)
-         (adb--report-operation
-          (format "install-%s" (file-name-nondirectory apk)) status output))))))
+  "Install APK on the default Android device.
+With a prefix argument, APK is a list and each file is installed separately.
+The `-r' switch in `adb' chooses whether an existing app is replaced."
+  (interactive
+   (list
+    (if current-prefix-arg
+        (adb--read-apk-files)
+      (read-file-name "APK: " nil nil t nil
+                      (lambda (file)
+                        (or (file-directory-p file)
+                            (string-match-p "\\.apk\\'" file)))))))
+  (let ((replace (and (adb--install-replace-p) t)))
+    (if (consp apk)
+        (adb--install-apk-files (adb-read-device) apk replace)
+      (let ((serial (adb-read-device)))
+        (adb-install-apk
+         serial apk
+         (lambda (status output)
+           (if (and (zerop status) (string-match-p "Success" output))
+               (message "adb: installed %s on %s"
+                        (file-name-nondirectory apk) serial)
+             (adb--report-operation
+              (format "install-%s" (file-name-nondirectory apk))
+              status output)))
+         :replace replace)))))
 
 (defun adb-launch-package-command (package &optional activity)
   "Launch PACKAGE, optionally using ACTIVITY, on the default device."
@@ -306,7 +321,8 @@ Candidates come from the current adb device list."
       (string-match-p "\\.apk\\'" file)))
 
 (defun adb--normalize-apk-files (names)
-  "Return the readable APK files among completion NAMES."
+  "Return the readable APK files among completion NAMES.
+Paths to the same file are collapsed after resolving symbolic links."
   (let ((files
          (delete-dups
           (seq-filter
@@ -314,24 +330,69 @@ Candidates come from the current adb device list."
              (and (file-regular-p file)
                   (file-readable-p file)
                   (string-match-p "\\.apk\\'" file)))
-           (mapcar #'expand-file-name names)))))
+           (mapcar (lambda (name)
+                     (file-truename (expand-file-name name)))
+                   names)))))
     (unless files
       (user-error "Select one or more readable APK files"))
     files))
 
+(defun adb--file-name-directory ()
+  "Return the directory `read-file-name' would use."
+  (let ((dir (or default-directory "~/")))
+    (unless (file-name-absolute-p dir)
+      (setq dir (expand-file-name dir)))
+    (abbreviate-file-name dir)))
+
 (defun adb--read-apk-files ()
-  "Read one or more APK files with `completing-read-multiple'."
-  (adb--normalize-apk-files
-   (completing-read-multiple
-    "APKs: " #'read-file-name-internal #'adb--apk-file-completion-p t)))
+  "Read one or more APK files with `completing-read-multiple'.
+The initial input is the same directory `read-file-name' inserts."
+  (let* ((dir (adb--file-name-directory))
+         (default-directory (file-name-as-directory (expand-file-name dir)))
+         (initial (and insert-default-directory
+                       (minibuffer-maybe-quote-filename dir))))
+    (minibuffer-with-setup-hook
+        (lambda ()
+          (setq default-directory (file-name-as-directory
+                                   (expand-file-name dir)))
+          (setq-local minibuffer-completing-file-name t)
+          (setq-local completion-ignore-case
+                      read-file-name-completion-ignore-case)
+          (set-syntax-table minibuffer-local-filename-syntax))
+      (adb--normalize-apk-files
+       (completing-read-multiple
+        "APKs: " #'read-file-name-internal #'adb--apk-file-completion-p t
+        initial 'file-name-history)))))
+
+(defun adb--install-apk-files (serial apks replace)
+  "Install APKS on SERIAL one after another.
+REPLACE controls the `-r' flag.  Stop after the first failure."
+  (when apks
+    (let ((apk (car apks))
+          (remaining (cdr apks)))
+      (adb-install-apk
+       serial apk
+       (lambda (status output)
+         (if (and (zerop status) (string-match-p "Success" output))
+             (progn
+               (message "adb: installed %s on %s"
+                        (file-name-nondirectory apk) serial)
+               (adb--install-apk-files serial remaining replace))
+           (adb--report-operation
+            (format "install-%s" (file-name-nondirectory apk))
+            status output)))
+       :replace replace))))
 
 (defun adb-install-multiple-files (apks)
-  "Install selected APKS on the default device.
-Interactively, choose the files with `completing-read-multiple'."
+  "Install APKS as splits of one package on the default device.
+Interactively, choose the files with `completing-read-multiple'.
+The `-r' switch in `adb' chooses whether an existing app is replaced."
   (interactive (list (adb--read-apk-files)))
   (adb-install-multiple
    (adb-read-device) apks
-   (lambda (status output) (adb--report-operation "install-multiple" status output))))
+   (lambda (status output)
+     (adb--report-operation "install-multiple" status output))
+   :replace (and (adb--install-replace-p) t)))
 
 (defun adb-create-bugreport (destination)
   "Write a bug report to DESTINATION."
@@ -898,6 +959,7 @@ EXTRAS are flags inserted before the package."
 ;;;###autoload (autoload 'adb "adb-transient" nil t)
 (transient-define-prefix adb ()
   "Discover and control Android devices through adb."
+  :value '("-r")
   [["Device"
     ("s" "Select device" adb-select-device)
     ("l" "List devices" adb-list-devices)
@@ -914,10 +976,11 @@ EXTRAS are flags inserted before the package."
     ("F" "Forward port" adb-forward-port)
     ("V" "Reverse port" adb-reverse-port)]
    ["App"
+    ("-r" "Replace existing" "-r")
     ("a" "Activity manager" adb-am)
     ("p" "Package manager" adb-pm)
     ("i" "Install APK" adb-install-apk-file)
-    ("m" "Install multiple APKs" adb-install-multiple-files)
+    ("m" "Install splits" adb-install-multiple-files)
     ("u" "Uninstall APK" adb-uninstall-package)]
    ["Files"
     ("P" "Push file" adb-push-file)

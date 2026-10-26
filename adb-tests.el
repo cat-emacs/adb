@@ -12,7 +12,10 @@
                      'fake-process)))
           (should (eq (adb-install-apk "SER1" apk) 'fake-process))
           (should (equal (car command) "SER1"))
-          (should (equal (cadr command) (list "install" "-r" apk))))
+          (should (equal (cadr command) (list "install" "-r" apk)))
+          (setq command nil)
+          (adb-install-apk "SER1" apk nil :replace nil)
+          (should (equal (cadr command) (list "install" apk))))
       (delete-file apk))))
 
 (ert-deftest adb-install-apk-rejects-missing-file ()
@@ -52,6 +55,10 @@
           (should (member '("SER1" ("tcpip" "5555")) commands))
           (should (member '("SER1" ("usb")) commands))
           (should (member (list "SER1" (list "install-multiple" "-r" apk))
+                         commands))
+          (setq commands nil)
+          (adb-install-multiple "SER1" (list apk) nil :replace nil)
+          (should (member (list "SER1" (list "install-multiple" apk))
                          commands)))
       (delete-file apk))))
 
