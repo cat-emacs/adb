@@ -97,6 +97,40 @@
                   "revoke" '("--all-permissions"))
                  '("pm" "revoke" "--all-permissions"))))
 
+(ert-deftest adb-normalize-apk-files-keeps-readable-apks ()
+  (let* ((dir (make-temp-file "adb-apks-" t))
+         (apk (expand-file-name "app.apk" dir))
+         (other (expand-file-name "notes.txt" dir))
+         (nested (expand-file-name "nested/" dir)))
+    (unwind-protect
+        (progn
+          (write-region "" nil apk)
+          (write-region "" nil other)
+          (make-directory nested)
+          (should (equal (adb--normalize-apk-files
+                          (list apk other nested "missing.apk" apk))
+                         (list apk)))
+          (should-error (adb--normalize-apk-files (list other))
+                        :type 'user-error))
+      (delete-directory dir t))))
+
+(ert-deftest adb-read-apk-files-uses-multiple-file-completion ()
+  (let* ((dir (make-temp-file "adb-apks-" t))
+         (apk (expand-file-name "app.apk" dir))
+         args)
+    (unwind-protect
+        (progn
+          (write-region "" nil apk)
+          (cl-letf (((symbol-function 'completing-read-multiple)
+                     (lambda (&rest arguments)
+                       (setq args arguments)
+                       (list apk))))
+            (should (equal (adb--read-apk-files) (list apk)))
+            (should (eq (nth 1 args) #'read-file-name-internal))
+            (should (eq (nth 2 args) #'adb--apk-file-completion-p))
+            (should (eq (nth 3 args) t))))
+      (delete-directory dir t))))
+
 (ert-deftest adb-transient-is-available ()
   (should (commandp #'adb))
   (should (commandp #'adb-am))

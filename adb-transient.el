@@ -299,13 +299,36 @@ Candidates come from the current adb device list."
    (adb-read-device)
    (lambda (status output) (adb--report-operation "usb" status output))))
 
+(defun adb--apk-file-completion-p (file)
+  "Return non-nil when FILE can be completed as an APK or directory."
+  (or (directory-name-p file)
+      (file-directory-p file)
+      (string-match-p "\\.apk\\'" file)))
+
+(defun adb--normalize-apk-files (names)
+  "Return the readable APK files among completion NAMES."
+  (let ((files
+         (delete-dups
+          (seq-filter
+           (lambda (file)
+             (and (file-regular-p file)
+                  (file-readable-p file)
+                  (string-match-p "\\.apk\\'" file)))
+           (mapcar #'expand-file-name names)))))
+    (unless files
+      (user-error "Select one or more readable APK files"))
+    files))
+
+(defun adb--read-apk-files ()
+  "Read one or more APK files with `completing-read-multiple'."
+  (adb--normalize-apk-files
+   (completing-read-multiple
+    "APKs: " #'read-file-name-internal #'adb--apk-file-completion-p t)))
+
 (defun adb-install-multiple-files (apks)
-  "Install selected APKS on the default device."
-  (interactive (list (let ((file (read-file-name "APK: " nil nil t)))
-                       (let ((files (list file)))
-                         (while (y-or-n-p "Add another APK? ")
-                           (push (read-file-name "APK: " nil nil t) files))
-                         (nreverse files)))))
+  "Install selected APKS on the default device.
+Interactively, choose the files with `completing-read-multiple'."
+  (interactive (list (adb--read-apk-files)))
   (adb-install-multiple
    (adb-read-device) apks
    (lambda (status output) (adb--report-operation "install-multiple" status output))))
