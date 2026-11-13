@@ -18,6 +18,28 @@
           (should (equal (cadr command) (list "install" apk))))
       (delete-file apk))))
 
+(ert-deftest adb-directory-files-preserves-shell-sensitive-names ()
+  (let* ((root (make-temp-file "adb-files-" t))
+         (directory (expand-file-name "a 'quote; $d" root)))
+    (unwind-protect
+        (progn
+          (make-directory directory)
+          (dolist (name '("hello world" ".hidden" "line\nbreak" "$(no-command)"))
+            (write-region "" nil (expand-file-name name directory)))
+          (make-directory (expand-file-name "folder" directory))
+          (make-symbolic-link "folder" (expand-file-name "link" directory))
+          (cl-letf (((symbol-function 'adb-query)
+                     (lambda (serial shell script)
+                       (should (equal serial "SER1"))
+                       (should (equal shell "shell"))
+                       (with-temp-buffer
+                         (should (zerop (call-process "sh" nil t nil "-c" script)))
+                         (buffer-string)))))
+            (should (equal (adb-directory-files "SER1" directory)
+                           '("$(no-command)" ".hidden" "folder/" "hello world"
+                             "line\nbreak" "link/")))))
+      (delete-directory root t))))
+
 (ert-deftest adb-install-apk-rejects-missing-file ()
   (should-error (adb-install-apk "SER1" "/missing/test.apk")
                 :type 'user-error))

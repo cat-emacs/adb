@@ -181,6 +181,25 @@ otherwise use the Android launcher category.  CALLBACK receives status/output."
   (adb--start-operation
    serial (list "pull" remote (expand-file-name local)) "pull" callback))
 
+(defun adb-directory-files (serial directory)
+  "Return file names in DIRECTORY on SERIAL, including hidden entries.
+DIRECTORY must be absolute.  Directories have a trailing slash, including
+symlinks to directories.  Names are NUL-delimited over adb to preserve spaces
+and newlines.  Signal if the directory cannot be listed by the shell user."
+  (unless (file-name-absolute-p directory)
+    (user-error "Device directory must be absolute: %s" directory))
+  (let* ((script
+          (concat
+           "dir=" (shell-quote-argument directory) "; "
+           "[ -d \"$dir\" ] && [ -r \"$dir\" ] && [ -x \"$dir\" ] || exit 1; "
+           "for entry in \"$dir\"/* \"$dir\"/.[!.]* \"$dir\"/..?*; do "
+           "[ -e \"$entry\" ] || [ -L \"$entry\" ] || continue; "
+           "name=${entry##*/}; "
+           "if [ -d \"$entry\" ]; then printf '%s/\\0' \"$name\"; "
+           "else printf '%s\\0' \"$name\"; fi; done"))
+         (output (adb-query serial "shell" script)))
+    (sort (split-string output "\0" t) #'string<)))
+
 (defun adb-forward (serial local remote)
   "Forward LOCAL to REMOTE on SERIAL and return adb output."
   (adb-query serial "forward" local remote))

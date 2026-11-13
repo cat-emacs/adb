@@ -123,9 +123,42 @@ to free text."
             nil))))
     (completing-read prompt permissions nil nil initial-input)))
 
-(defun adb--read-remote-path ()
-  "Read an Android device path."
-  (read-string "Remote path: "))
+(defvar adb-remote-path-history nil
+  "History of device paths entered for file transfers.")
+
+(defun adb--read-remote-path (serial &optional mustmatch)
+  "Read an absolute device path on SERIAL with directory completion.
+Start at /sdcard/.  MUSTMATCH requires an existing path for pull; push accepts
+new destination names.  Directory listings are cached for this prompt only."
+  (let ((cache (make-hash-table :test #'equal))
+        (completion-ignore-case nil))
+    (let* ((entries
+            (lambda (directory)
+              (or (gethash directory cache)
+                  (let ((names (adb-directory-files serial directory)))
+                    (puthash directory (append '("" "./" "../") names) cache)))))
+           (table
+            (lambda (string predicate action)
+              (cond
+               ((eq action 'metadata) '(metadata (category . adb-path)))
+               (t
+                (let* ((directory (or (file-name-directory string) "/"))
+                       (name (file-name-nondirectory string)))
+                  (if (not (string-prefix-p "/" string))
+                      (complete-with-action action '("/") string predicate)
+                    (if (eq (car-safe action) 'boundaries)
+                        `(boundaries ,(length directory)
+                                     . ,(or (string-search "/" (cdr action))
+                                            (length (cdr action))))
+                      (completion-table-with-context
+                       directory (funcall entries directory)
+                       name predicate action))))))))
+           (path (completing-read
+                  (format "Device path (%s): " serial) table nil mustmatch
+                  "/sdcard/" 'adb-remote-path-history)))
+      (unless (string-prefix-p "/" path)
+        (user-error "Device path must be absolute"))
+      path)))
 
 (defun adb--report-operation (label status output)
   "Report LABEL operation result from STATUS and OUTPUT."
@@ -197,20 +230,28 @@ The `-r' switch in `adb' chooses whether an existing app is replaced."
    (adb-read-device) package
    (lambda (status output) (adb--report-operation "clear-package" status output))))
 
-(defun adb-push-file (local remote)
-  "Push LOCAL to REMOTE on the default device."
-  (interactive (list (read-file-name "Local file: ")
-                     (adb--read-remote-path)))
+(defun adb-push-file (local remote &optional serial)
+  "Push LOCAL to REMOTE on SERIAL, or the selected device.
+Both paths support completion; LOCAL must exist, REMOTE may be a new name."
+  (interactive
+   (let* ((serial (adb-read-device))
+          (local (read-file-name "Local file or directory: " nil nil t))
+          (remote (adb--read-remote-path serial)))
+     (list local remote serial)))
   (adb-push
-   (adb-read-device) local remote
+   (or serial (adb-read-device)) local remote
    (lambda (status output) (adb--report-operation "push" status output))))
 
-(defun adb-pull-file (remote local)
-  "Pull REMOTE to LOCAL."
-  (interactive (list (adb--read-remote-path)
-                     (read-file-name "Local destination: ")))
+(defun adb-pull-file (remote local &optional serial)
+  "Pull REMOTE to LOCAL on SERIAL, or the selected device.
+Both paths support completion; REMOTE must exist, LOCAL may be a new name."
+  (interactive
+   (let* ((serial (adb-read-device))
+          (remote (adb--read-remote-path serial t))
+          (local (read-file-name "Local destination: ")))
+     (list remote local serial)))
   (adb-pull
-   (adb-read-device) remote local
+   (or serial (adb-read-device)) remote local
    (lambda (status output) (adb--report-operation "pull" status output))))
 
 (defun adb-forward-port (local remote)

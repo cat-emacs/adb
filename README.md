@@ -34,6 +34,8 @@ its consumers have been updated; do not load both implementations.
   `adb-uninstall`, `adb-clear-package-data`: application
   lifecycle operations.
 - `adb-push` / `adb-pull`: asynchronous file transfer.
+- `adb-directory-files`: list a device directory, with trailing slashes for
+  directories and NUL-delimited output to preserve file names.
 - `adb-connect` / `adb-disconnect` / `adb-pair`:
   network device management.
 - `adb-get-state`, `adb-get-serialno`,
@@ -66,6 +68,21 @@ The Transient menu uses the same default serial as the programmatic interface.
 Set `adb-program` for an explicit executable, or
 `adb-sdk-directory` for SDK fallback. Queries default to a five-second
 timeout. Commands use argument vectors, not shell command strings.
+
+## File transfer completion
+
+In `M-x adb`, `P` pushes and `G` pulls. Both prompts support completion:
+
+- Host paths use Emacs's native `read-file-name`.
+- Device paths start at `/sdcard/` and query the selected device one directory
+  at a time. Directories end in `/`; hidden files and names with spaces are
+  preserved. Listings are cached only during the current prompt.
+- Push requires an existing host file or directory but permits a new device
+  destination. Pull requires an existing device path but permits a new host
+  destination. Both use the same device for completion and transfer.
+
+Completion runs as the adb shell user, not root; protected directories may
+report permission errors. It does not bypass Android storage restrictions.
 
 ## Development
 
