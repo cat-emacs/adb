@@ -28,8 +28,8 @@ its consumers have been updated; do not load both implementations.
 - `adb-command`: argument vector for a serial and command arguments.
 - `adb-start`: asynchronous process, owned by the caller.
 - `adb-install-apk`: asynchronous `adb install`, with `-r` by default so an
-  existing installation is replaced and its data is kept. Pass `:replace nil`
-  to omit that flag. The completion callback receives exit status and output.
+  existing installation is replaced and its data is kept. `:allow-test`,
+  `:allow-downgrade`, and `:grant-permissions` add `-t`, `-d`, and `-g`.
 - `adb-launch-package`, `adb-force-stop`,
   `adb-uninstall`, `adb-clear-package-data`: application
   lifecycle operations.
@@ -37,16 +37,19 @@ its consumers have been updated; do not load both implementations.
 - `adb-directory-files`: list a device directory, with trailing slashes for
   directories and NUL-delimited output to preserve file names.
 - `adb-connect` / `adb-disconnect` / `adb-pair`:
-  network device management.
+  network device management. Connection and pairing prompts offer addresses
+  discovered by `adb mdns services` and still accept a typed address.
 - `adb-get-state`, `adb-get-serialno`,
   `adb-wait-for-device`, `adb-reboot`, `adb-tcpip`, and
   `adb-usb`: device state and transport control.
 - `adb-install-multiple` and `adb-bugreport`: one split-APK session
   and bug report generation. `adb-install-multiple` also replaces an existing
   installation unless `:replace` is nil. In the menu, `-r` selects that flag
-  for both `i` and `m`; it is enabled by default. `C-u i` installs each
-  selected APK separately, while `m` keeps `adb install-multiple`.
-- `adb-forward` / `adb-reverse`: port mapping.
+  for both `i` and `m`; it is enabled by default. `-t`, `-d`, and `-g` add the
+  other install flags. `C-u i` installs each selected APK separately, while
+  `m` keeps `adb install-multiple`. Invalid selections are reported by name.
+- `adb-forward` / `adb-reverse`: port mapping. The menu can also select and
+  remove an existing forward or reverse rule.
 - `adb-getprop`, `adb-device-info`, `adb-battery`, and
   `adb-display-size`: common device queries.
 - `adb-query`: bounded short query; signals on failure or timeout.
@@ -63,8 +66,9 @@ its consumers have been updated; do not load both implementations.
   prompts offer candidates. Entering either submenu pins one device for its
   queries and commands. Components come from the selected package, users come
   from `pm list users', and permissions show the selected package's runtime
-  grant state. APK installation remains an adb operation beside
-  the shell menus. Loading `adb.el` alone does not load Transient.
+  grant state. Clearing data, uninstalling, disabling, crashing, and changing
+  all runtime permissions ask for confirmation first. Loading `adb.el` alone
+  does not load Transient.
 
 Set `adb-default-device-serial` to avoid repeated selection prompts.
 The Transient menu uses the same default serial as the programmatic interface.
@@ -77,7 +81,8 @@ timeout. Commands use argument vectors, not shell command strings.
 In `M-x adb`, `P` pushes and `G` pulls. Both prompts support completion:
 
 - Host paths use Emacs's native `read-file-name`.
-- Device paths start at `/sdcard/` and query the selected device one directory
+- Device paths start at the last directory used for that device, or `/sdcard/`,
+  and query the selected device one directory
   at a time. Directories end in `/`; hidden files and names with spaces are
   preserved. Listings are cached only during the current prompt.
 - Push requires an existing host file or directory but permits a new device

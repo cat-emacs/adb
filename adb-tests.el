@@ -40,6 +40,28 @@
                              "line\nbreak" "link/")))))
       (delete-directory root t))))
 
+(ert-deftest adb-install-flags-are-optional ()
+  (let ((apk (make-temp-file "adb-test" nil ".apk")) command)
+    (unwind-protect
+        (cl-letf (((symbol-function 'adb-start)
+                   (lambda (_serial arguments &rest _)
+                     (setq command arguments)
+                     'fake-process)))
+          (adb-install-apk "SER1" apk nil :replace nil :allow-test t
+                           :allow-downgrade t :grant-permissions t)
+          (should (equal command (list "install" "-t" "-d" "-g" apk))))
+      (delete-file apk))))
+
+(ert-deftest adb-mdns-and-port-rules-parse-listings ()
+  (should (equal (adb-parse-mdns
+                  "List of discovered mdns services\nadb-1 _adb._tcp 192.0.2.10:5555\nadb-1 _adb-tls-pairing._tcp 192.0.2.10:37123\n")
+                 '((:instance "adb-1" :type "_adb._tcp" :address "192.0.2.10:5555")
+                   (:instance "adb-1" :type "_adb-tls-pairing._tcp"
+                              :address "192.0.2.10:37123"))))
+  (should (equal (adb-parse-port-rules "SER1 tcp:8080 tcp:80\ntcp:9 tcp:9\n")
+                 '((:serial "SER1" :source "tcp:8080" :destination "tcp:80")
+                   (:source "tcp:9" :destination "tcp:9")))))
+
 (ert-deftest adb-install-apk-rejects-missing-file ()
   (should-error (adb-install-apk "SER1" "/missing/test.apk")
                 :type 'user-error))

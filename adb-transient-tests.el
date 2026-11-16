@@ -99,7 +99,8 @@
       (should (equal choices '("192.168.1.20:5555" "10.0.0.2:5555"))))))
 
 (ert-deftest adb-remote-path-completion-navigates-and-caches-directories ()
-  (let (queries)
+  (let ((adb-remote-path-directories nil)
+        queries)
     (cl-letf (((symbol-function 'adb-directory-files)
                (lambda (serial directory)
                  (should (equal serial "SER1"))
@@ -243,11 +244,14 @@
           (write-region "" nil apk)
           (write-region "" nil other)
           (make-directory nested)
-          (should (equal (adb--normalize-apk-files
-                          (list apk other nested "missing.apk" apk))
+          (should (equal (adb--normalize-apk-files (list apk apk))
                          (list (file-truename apk))))
-          (should-error (adb--normalize-apk-files (list other))
-                        :type 'user-error))
+          (let ((error (should-error
+                        (adb--normalize-apk-files
+                         (list apk other nested "missing.apk"))
+                        :type 'user-error)))
+            (should (string-match-p "notes.txt" (error-message-string error)))
+            (should (string-match-p "missing.apk" (error-message-string error)))))
       (delete-directory dir t))))
 
 (ert-deftest adb-normalize-apk-files-collapses-the-same-file ()
@@ -269,7 +273,7 @@
                  (should replace)
                  (push (list serial apk) commands)
                  (funcall callback 0 "Success\n"))))
-      (adb--install-apk-files "SER1" '("/tmp/a.apk" "/tmp/b.apk") t)
+      (adb--install-apk-files "SER1" '("/tmp/a.apk" "/tmp/b.apk") :replace t)
       (should (equal (nreverse commands)
                      '(("SER1" "/tmp/a.apk") ("SER1" "/tmp/b.apk")))))))
 
@@ -281,7 +285,7 @@
                  (push apk commands)
                  (funcall callback 1 "Failure [INSTALL_FAILED_INVALID_APK]")))
               ((symbol-function 'adb--report-operation) #'ignore))
-      (adb--install-apk-files "SER1" '("/tmp/a.apk" "/tmp/b.apk") nil)
+      (adb--install-apk-files "SER1" '("/tmp/a.apk" "/tmp/b.apk") :replace nil)
       (should (equal commands '("/tmp/a.apk"))))))
 
 (ert-deftest adb-read-apk-files-uses-multiple-file-completion ()
@@ -312,8 +316,9 @@
   (should (eq (adb-test--suffix-command 'adb "a") 'adb-am))
   (should (eq (adb-test--suffix-command 'adb "p") 'adb-pm))
   (should (equal (transient-args 'adb) '("-r")))
-  (dolist (key '("s" "l" "w" "r" "S" "K" "c" "d" "y" "t" "U" "F" "V"
-                 "-r" "i" "m" "u" "P" "G" "b" "B" "I" "E" "x"))
+  (dolist (key '("s" "l" "w" "r" "S" "K" "c" "d" "y" "t" "U"
+                 "F" "f" "V" "v" "-r" "-t" "-d" "-g"
+                 "i" "m" "u" "P" "G" "b" "B" "I" "E" "x"))
     (should (transient-get-suffix 'adb key)))
   (dolist (key '("-n" "-p" "-u" "-a" "-d" "-e" "-z" "-C" "-D" "-W" "-S"))
     (should (transient-get-suffix 'adb-am key)))
@@ -323,6 +328,32 @@
     (should (transient-get-suffix 'adb-pm key)))
   (dolist (key '("l" "c" "n" "g" "r" "u"))
     (should (transient-get-suffix 'adb-pm key))))
+
+(ert-deftest adb-remote-directory-is-remembered-per-device ()
+  (let ((adb-remote-path-directories nil)
+        initial)
+    (cl-letf (((symbol-function 'adb-directory-files) (lambda (&rest _) nil))
+              ((symbol-function 'completing-read)
+               (lambda (_prompt _table _predicate _mustmatch initial-input &rest _)
+                 (setq initial initial-input)
+                 "/sdcard/Download/app.apk")))
+      (adb--read-remote-path "SER1")
+      (should (equal initial "/sdcard/"))
+      (adb--read-remote-path "SER1")
+      (should (equal initial "/sdcard/Download/"))
+      (adb--read-remote-path "OTHER")
+      (should (equal initial "/sdcard/")))))
+
+(ert-deftest adb-destructive-action-can-be-canceled ()
+  (cl-letf (((symbol-function 'yes-or-no-p)
+             (lambda (prompt)
+               (should (string-match-p
+                        "Clear data for com.example on SER1, user 0"
+                        prompt))
+               nil)))
+    (should-error (adb--confirm-package-action
+                   "Clear data for" "com.example" '("--user=0") "SER1")
+                  :type 'user-error)))
 
 (provide 'adb-transient-tests)
 ;;; adb-transient-tests.el ends here

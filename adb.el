@@ -129,16 +129,26 @@ The output buffer is named from NAME and remains available to the caller."
                     (with-current-buffer (process-buffer process)
                       (buffer-string)))))))))
 
-(cl-defun adb-install-apk (serial apk &optional callback &key (replace t))
+(defun adb--install-flags (replace allow-test allow-downgrade grant-permissions)
+  "Return flags for REPLACE, ALLOW-TEST, ALLOW-DOWNGRADE, and GRANT-PERMISSIONS."
+  (append (and replace '("-r"))
+          (and allow-test '("-t"))
+          (and allow-downgrade '("-d"))
+          (and grant-permissions '("-g"))))
+
+(cl-defun adb-install-apk (serial apk &optional callback
+                                  &key (replace t) allow-test
+                                  allow-downgrade grant-permissions)
   "Install APK on SERIAL asynchronously and return its process.
-REPLACE, which defaults to non-nil, passes `-r' so an existing installation
-of the same package is replaced and its data is kept.  CALLBACK receives the
-process exit status and complete output after adb exits."
+REPLACE, which defaults to non-nil, passes `-r' and keeps app data.
+ALLOW-TEST passes `-t', ALLOW-DOWNGRADE passes `-d', and GRANT-PERMISSIONS
+passes `-g'.  CALLBACK receives the exit status and complete output."
   (unless (file-readable-p apk)
     (user-error "Cannot read APK: %s" apk))
   (adb--start-operation
    serial (append '("install")
-                  (and replace '("-r"))
+                  (adb--install-flags replace allow-test allow-downgrade
+                                      grant-permissions)
                   (list (expand-file-name apk)))
    (format "install %s" (file-name-nondirectory apk)) callback))
 
@@ -365,6 +375,42 @@ Optional USER limits grant status to that numeric user id."
     (when (string-match "Physical size:[[:space:]]*\\([0-9]+x[0-9]+\\)" output)
       (match-string 1 output))))
 
+(defun adb-parse-mdns (output)
+  "Return mDNS services found in `adb mdns services' OUTPUT.
+Each result has :instance, :type, and :address."
+  (let (services)
+    (dolist (line (split-string (or output "") "\n" t))
+      (when (string-match
+             "^\\([^[:space:]]+\\)[[:space:]]+\\(_adb[^[:space:]]*\\)[[:space:]]+\\([^[:space:]]+:[0-9]+\\)"
+             line)
+        (push (list :instance (match-string 1 line)
+                    :type (match-string 2 line)
+                    :address (match-string 3 line))
+              services)))
+    (nreverse services)))
+
+(defun adb-mdns-services ()
+  "Return wireless adb services discovered by mDNS."
+  (adb-parse-mdns (adb-query nil "mdns" "services")))
+
+(defun adb-parse-port-rules (output)
+  "Return port rules found in adb forward or reverse OUTPUT.
+Three-field lines provide :serial, :source, and :destination.  Two-field
+lines provide :source and :destination."
+  (let (rules)
+    (dolist (line (split-string (or output "") "\n" t))
+      (let ((fields (split-string line "[[:space:]]+" t)))
+        (cond ((= (length fields) 3)
+               (push (list :serial (nth 0 fields)
+                           :source (nth 1 fields)
+                           :destination (nth 2 fields))
+                     rules))
+              ((= (length fields) 2)
+               (push (list :source (nth 0 fields)
+                           :destination (nth 1 fields))
+                     rules)))))
+    (nreverse rules)))
+
 (defun adb-connect (host)
   "Connect to HOST, returning adb output."
   (adb-query nil "connect" host))
@@ -410,16 +456,19 @@ CALLBACK receives status and output."
 CALLBACK receives status and output."
   (adb--start-operation serial '("usb") "usb" callback))
 
-(cl-defun adb-install-multiple (serial apks &optional callback &key (replace t))
+(cl-defun adb-install-multiple (serial apks &optional callback
+                                       &key (replace t) allow-test
+                                       allow-downgrade grant-permissions)
   "Install APKS atomically on SERIAL and return its process.
-APKS is a non-empty list of readable split APK paths.  REPLACE, which
-defaults to non-nil, passes `-r' so an existing installation is replaced.
-CALLBACK receives status and output."
+APKS is a non-empty list of readable split APK paths.  REPLACE defaults to
+non-nil and passes `-r'.  ALLOW-TEST, ALLOW-DOWNGRADE, and GRANT-PERMISSIONS
+pass `-t', `-d', and `-g'.  CALLBACK receives status and output."
   (unless (and apks (seq-every-p #'file-readable-p apks))
     (user-error "Select one or more readable APK files"))
   (adb--start-operation
    serial (append '("install-multiple")
-                  (and replace '("-r"))
+                  (adb--install-flags replace allow-test allow-downgrade
+                                      grant-permissions)
                   (mapcar #'expand-file-name apks))
    "install-multiple" callback))
 

@@ -215,6 +215,22 @@ their grant state.  Otherwise the device's dangerous permissions are used."
 (defvar adb-remote-path-history nil
   "History of device paths entered for file transfers.")
 
+(defvar adb-remote-path-directories nil
+  "Alist mapping a device serial to its last transfer directory.")
+
+(defun adb--remote-start (serial)
+  "Return the initial device directory for SERIAL."
+  (or (cdr (assoc serial adb-remote-path-directories)) "/sdcard/"))
+
+(defun adb--remember-remote-directory (serial path)
+  "Remember PATH's directory as SERIAL's next completion start."
+  (let ((directory (if (string-suffix-p "/" path)
+                       path
+                     (or (file-name-directory path) "/"))))
+    (when (string-prefix-p "/" directory)
+      (setf (alist-get serial adb-remote-path-directories nil nil #'equal)
+            (file-name-as-directory directory)))))
+
 (defun adb--read-remote-path (serial &optional mustmatch)
   "Read an absolute device path on SERIAL with directory completion.
 Start at /sdcard/.  MUSTMATCH requires an existing path for pull; push accepts
@@ -244,9 +260,10 @@ new destination names.  Directory listings are cached for this prompt only."
                        name predicate action))))))))
            (path (completing-read
                   (format "Device path (%s): " serial) table nil mustmatch
-                  "/sdcard/" 'adb-remote-path-history)))
+                  (adb--remote-start serial) 'adb-remote-path-history)))
       (unless (string-prefix-p "/" path)
         (user-error "Device path must be absolute"))
+      (adb--remember-remote-directory serial path)
       path)))
 
 (defun adb--report-operation (label status output)
@@ -257,9 +274,13 @@ new destination names.  Directory listings are cached for this prompt only."
                                 status output)
     (message "adb: %s failed with status %s" label status)))
 
-(defun adb--install-replace-p ()
-  "Return non-nil when the adb menu's replace switch is enabled."
-  (member "-r" (transient-args 'adb)))
+(defun adb--install-options ()
+  "Return install keywords selected in the adb menu."
+  (let ((arguments (ignore-errors (transient-args 'adb))))
+    (list :replace (and (member "-r" arguments) t)
+          :allow-test (and (member "-t" arguments) t)
+          :allow-downgrade (and (member "-d" arguments) t)
+          :grant-permissions (and (member "-g" arguments) t))))
 
 (defun adb-install-apk-file (apk)
   "Install APK on the default Android device.
@@ -273,20 +294,19 @@ The `-r' switch in `adb' chooses whether an existing app is replaced."
                       (lambda (file)
                         (or (file-directory-p file)
                             (string-match-p "\\.apk\\'" file)))))))
-  (let ((replace (and (adb--install-replace-p) t)))
+  (let ((serial (adb-read-device))
+        (options (adb--install-options)))
     (if (consp apk)
-        (adb--install-apk-files (adb-read-device) apk replace)
-      (let ((serial (adb-read-device)))
-        (adb-install-apk
-         serial apk
-         (lambda (status output)
-           (if (and (zerop status) (string-match-p "Success" output))
-               (message "adb: installed %s on %s"
-                        (file-name-nondirectory apk) serial)
-             (adb--report-operation
-              (format "install-%s" (file-name-nondirectory apk))
-              status output)))
-         :replace replace)))))
+        (apply #'adb--install-apk-files serial apk options)
+      (apply #'adb-install-apk serial apk
+             (lambda (status output)
+               (if (and (zerop status) (string-match-p "Success" output))
+                   (message "adb: installed %s on %s"
+                            (file-name-nondirectory apk) serial)
+                 (adb--report-operation
+                  (format "install-%s" (file-name-nondirectory apk))
+                  status output)))
+             options))))
 
 (defun adb-launch-package-command (package &optional activity)
   "Launch PACKAGE, optionally using ACTIVITY, on the default device."
@@ -305,12 +325,28 @@ The `-r' switch in `adb' chooses whether an existing app is replaced."
    (adb-read-device) package
    (lambda (status output) (adb--report-operation "force-stop" status output))))
 
+(defun adb--confirm (prompt)
+  "Ask PROMPT and signal `user-error' unless the answer is yes."
+  (unless (yes-or-no-p prompt)
+    (user-error "Canceled")))
+
+(defun adb--confirm-package-action (verb package arguments serial)
+  "Confirm VERB for PACKAGE on SERIAL using ARGUMENTS."
+  (let ((user (and arguments (adb--option-value "--user=" arguments))))
+    (adb--confirm
+     (format "%s %s on %s%s? "
+             verb package serial
+             (if (and user (not (string-empty-p user)))
+                 (format ", user %s" user) "")))))
+
 (defun adb-uninstall-package (package)
   "Uninstall PACKAGE from the default device."
   (interactive (list (adb--read-package)))
-  (adb-uninstall
-   (adb-read-device) package
-   (lambda (status output) (adb--report-operation "uninstall" status output))))
+  (let ((serial (adb-read-device)))
+    (adb--confirm-package-action "Uninstall" package nil serial)
+    (adb-uninstall
+     serial package
+     (lambda (status output) (adb--report-operation "uninstall" status output)))))
 
 (defun adb-clear-package (package)
   "Clear data for PACKAGE on the default device."
@@ -353,6 +389,43 @@ Both paths support completion; REMOTE must exist, LOCAL may be a new name."
   (interactive "sRemote address (e.g. tcp:8080): \nsLocal address (e.g. tcp:8080): ")
   (message "adb: %s" (adb-reverse (adb-read-device) remote local)))
 
+(defun adb--remove-port-rule (kind)
+  "Remove a port rule of KIND, either `forward' or `reverse'."
+  (let* ((serial (adb-read-device))
+         (rules (adb-parse-port-rules
+                 (if (eq kind 'forward)
+                     (adb-list-forward serial)
+                   (adb-list-reverse serial))))
+         (rules (seq-filter
+                 (lambda (rule)
+                   (or (null (plist-get rule :serial))
+                       (equal (plist-get rule :serial) serial)))
+                 rules))
+         (labels (mapcar (lambda (rule)
+                           (cons (format "%s -> %s"
+                                         (plist-get rule :source)
+                                         (plist-get rule :destination))
+                                 (plist-get rule :source)))
+                         rules)))
+    (unless labels (user-error "No %s rules on %s" kind serial))
+    (let* ((choice (completing-read (format "Remove %s: " kind)
+                                    (mapcar #'car labels) nil t))
+           (source (cdr (assoc choice labels))))
+      (message "adb: %s"
+               (if (eq kind 'forward)
+                   (adb-remove-forward serial source)
+                 (adb-remove-reverse serial source))))))
+
+(defun adb-remove-forward-rule ()
+  "Remove one forward rule from the selected device."
+  (interactive)
+  (adb--remove-port-rule 'forward))
+
+(defun adb-remove-reverse-rule ()
+  "Remove one reverse rule from the selected device."
+  (interactive)
+  (adb--remove-port-rule 'reverse))
+
 (defun adb-show-device-info ()
   "Display common properties for the default device."
   (interactive)
@@ -368,9 +441,30 @@ Both paths support completion; REMOTE must exist, LOCAL may be a new name."
     (adb--buffer-output "*adb-battery*" 0
                                 (format "%S" (adb-battery serial)))))
 
-(defun adb--read-host ()
-  "Read a host and optional port."
-  (read-string "Host[:port]: "))
+(defun adb--mdns-choices (type-regexp)
+  "Return completion choices for mDNS services matching TYPE-REGEXP."
+  (delq nil
+        (mapcar
+         (lambda (service)
+           (when (string-match-p type-regexp (plist-get service :type))
+             (cons (format "%s (%s)"
+                           (plist-get service :address)
+                           (plist-get service :instance))
+                   (plist-get service :address))))
+         (adb-mdns-services))))
+
+(defun adb--read-host (&optional pairing)
+  "Read a host and optional port.
+PAIRING offers pairing services; otherwise connection services are offered.
+A typed address is accepted when discovery has no match."
+  (adb--read-with-fallback
+   (lambda (prompt _initial)
+     (adb--completion-value
+      prompt
+      (adb--mdns-choices
+       (if pairing "_adb-tls-pairing" "_adb\\(-tls-connect\\)\\?\\."))
+      nil))
+   "Host[:port]: " nil))
 
 (defun adb-connect-host (host)
   "Connect to HOST."
@@ -402,7 +496,7 @@ Candidates come from the current adb device list."
 
 (defun adb-pair-host (host code)
   "Pair with HOST using CODE."
-  (interactive (list (adb--read-host) (read-string "Pairing code: ")))
+  (interactive (list (adb--read-host t) (read-string "Pairing code: ")))
   (message "adb: %s" (adb-pair host code)))
 
 (defun adb-show-state ()
@@ -452,20 +546,24 @@ Candidates come from the current adb device list."
 
 (defun adb--normalize-apk-files (names)
   "Return the readable APK files among completion NAMES.
-Paths to the same file are collapsed after resolving symbolic links."
-  (let ((files
-         (delete-dups
-          (seq-filter
-           (lambda (file)
-             (and (file-regular-p file)
-                  (file-readable-p file)
-                  (string-match-p "\\.apk\\'" file)))
-           (mapcar (lambda (name)
-                     (file-truename (expand-file-name name)))
-                   names)))))
+Paths to the same file are collapsed after resolving symbolic links.
+Signal when any selected name is not a readable APK, naming every rejected
+entry so a partial selection is not mistaken for a complete install."
+  (let (files rejected seen)
+    (dolist (name names)
+      (let ((file (ignore-errors (file-truename (expand-file-name name)))))
+        (if (and file (file-regular-p file) (file-readable-p file)
+                 (string-match-p "\\.apk\\'" file))
+            (unless (member file seen)
+              (push file seen)
+              (push file files))
+          (push name rejected))))
+    (when rejected
+      (user-error "Not readable APK files: %s"
+                  (mapconcat #'identity (nreverse rejected) ", ")))
     (unless files
       (user-error "Select one or more readable APK files"))
-    files))
+    (nreverse files)))
 
 (defun adb--file-name-directory ()
   "Return the directory `read-file-name' would use."
@@ -494,35 +592,35 @@ The initial input is the same directory `read-file-name' inserts."
         "APKs: " #'read-file-name-internal #'adb--apk-file-completion-p t
         initial 'file-name-history)))))
 
-(defun adb--install-apk-files (serial apks replace)
+(defun adb--install-apk-files (serial apks &rest options)
   "Install APKS on SERIAL one after another.
-REPLACE controls the `-r' flag.  Stop after the first failure."
+OPTIONS are keywords accepted by `adb-install-apk'.  Stop after the first
+failure."
   (when apks
     (let ((apk (car apks))
           (remaining (cdr apks)))
-      (adb-install-apk
-       serial apk
-       (lambda (status output)
-         (if (and (zerop status) (string-match-p "Success" output))
-             (progn
-               (message "adb: installed %s on %s"
-                        (file-name-nondirectory apk) serial)
-               (adb--install-apk-files serial remaining replace))
-           (adb--report-operation
-            (format "install-%s" (file-name-nondirectory apk))
-            status output)))
-       :replace replace))))
+      (apply #'adb-install-apk serial apk
+             (lambda (status output)
+               (if (and (zerop status) (string-match-p "Success" output))
+                   (progn
+                     (message "adb: installed %s on %s"
+                              (file-name-nondirectory apk) serial)
+                     (apply #'adb--install-apk-files serial remaining options))
+                 (adb--report-operation
+                  (format "install-%s" (file-name-nondirectory apk))
+                  status output)))
+             options))))
 
 (defun adb-install-multiple-files (apks)
   "Install APKS as splits of one package on the default device.
 Interactively, choose the files with `completing-read-multiple'.
 The `-r' switch in `adb' chooses whether an existing app is replaced."
   (interactive (list (adb--read-apk-files)))
-  (adb-install-multiple
-   (adb-read-device) apks
-   (lambda (status output)
-     (adb--report-operation "install-multiple" status output))
-   :replace (and (adb--install-replace-p) t)))
+  (apply #'adb-install-multiple
+         (adb-read-device) apks
+         (lambda (status output)
+           (adb--report-operation "install-multiple" status output))
+         (adb--install-options)))
 
 (defun adb-create-bugreport (destination)
   "Write a bug report to DESTINATION."
@@ -801,10 +899,11 @@ activity."
 (defun adb-am-crash ()
   "Crash the selected package."
   (interactive)
-  (adb--run-shell "am-crash"
-                  (adb--am-package-arguments
-                   "crash" (adb--ensure-package (transient-args 'adb-am)))
-                  t))
+  (let ((arguments (adb--ensure-package (transient-args 'adb-am))))
+    (adb--confirm-package-action
+     "Crash" (adb--option-value "--package=" arguments) arguments
+     (adb--menu-serial))
+    (adb--run-shell "am-crash" (adb--am-package-arguments "crash" arguments) t)))
 
 (defun adb-am-instrument ()
   "Run instrumentation with the current am options."
@@ -917,6 +1016,9 @@ EXTRAS are flags inserted before the package."
   "Clear data for the selected package."
   (interactive)
   (let ((arguments (adb--ensure-package (transient-args 'adb-pm))))
+    (adb--confirm-package-action
+     "Clear data for" (adb--option-value "--package=" arguments)
+     arguments (adb--menu-serial))
     (adb--run-shell "pm-clear"
                     (adb--pm-package-arguments
                      "clear" arguments
@@ -926,6 +1028,9 @@ EXTRAS are flags inserted before the package."
   "Uninstall the selected package with pm."
   (interactive)
   (let ((arguments (adb--ensure-package (transient-args 'adb-pm))))
+    (adb--confirm-package-action
+     "Uninstall" (adb--option-value "--package=" arguments)
+     arguments (adb--menu-serial))
     (adb--run-shell "pm-uninstall"
                     (adb--pm-package-arguments
                      "uninstall" arguments
@@ -941,17 +1046,22 @@ EXTRAS are flags inserted before the package."
 (defun adb-pm-disable ()
   "Disable the selected package or component."
   (interactive)
-  (adb--run-shell "pm-disable"
-                  (adb--pm-package-arguments
-                   "disable" (adb--ensure-package (transient-args 'adb-pm)))))
+  (let ((arguments (adb--ensure-package (transient-args 'adb-pm))))
+    (adb--confirm-package-action
+     "Disable" (adb--option-value "--package=" arguments)
+     arguments (adb--menu-serial))
+    (adb--run-shell "pm-disable"
+                    (adb--pm-package-arguments "disable" arguments))))
 
 (defun adb-pm-disable-user ()
   "Disable the selected package or component for one user."
   (interactive)
-  (adb--run-shell "pm-disable-user"
-                  (adb--pm-package-arguments
-                   "disable-user"
-                   (adb--ensure-package (transient-args 'adb-pm)))))
+  (let ((arguments (adb--ensure-package (transient-args 'adb-pm))))
+    (adb--confirm-package-action
+     "Disable for one user" (adb--option-value "--package=" arguments)
+     arguments (adb--menu-serial))
+    (adb--run-shell "pm-disable-user"
+                    (adb--pm-package-arguments "disable-user" arguments))))
 
 (defun adb--pm-change-permission (label command)
   "Run pm COMMAND and report it as LABEL."
@@ -960,6 +1070,12 @@ EXTRAS are flags inserted before the package."
       (setq arguments (adb--ensure-package arguments)))
     (unless (member "--all-permissions" arguments)
       (setq arguments (adb--ensure-permission arguments)))
+    (when (member "--all-permissions" arguments)
+      (adb--confirm
+       (format "Change all runtime permissions%s on %s? "
+               (let ((package (adb--option-value "--package=" arguments)))
+                 (if package (format " for %s" package) ""))
+               (adb--menu-serial))))
     (adb--run-shell label (adb--pm-permission-arguments command arguments))))
 
 (defun adb-pm-grant ()
@@ -1112,9 +1228,14 @@ EXTRAS are flags inserted before the package."
     ("t" "TCP/IP" adb-switch-tcpip)
     ("U" "USB" adb-switch-usb)
     ("F" "Forward port" adb-forward-port)
-    ("V" "Reverse port" adb-reverse-port)]
+    ("f" "Remove forward" adb-remove-forward-rule)
+    ("V" "Reverse port" adb-reverse-port)
+    ("v" "Remove reverse" adb-remove-reverse-rule)]
    ["App"
     ("-r" "Replace existing" "-r")
+    ("-t" "Allow test APKs" "-t")
+    ("-d" "Allow downgrade" "-d")
+    ("-g" "Grant permissions" "-g")
     ("a" "Activity manager" adb-am)
     ("p" "Package manager" adb-pm)
     ("i" "Install APK" adb-install-apk-file)
