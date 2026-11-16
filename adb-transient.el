@@ -65,37 +65,105 @@
   (let ((output (adb-query adb-default-device-serial "reconnect")))
     (adb--buffer-output "*adb-reconnect*" 0 output)))
 
-(defun adb--read-package (&optional prompt initial)
-  "Read an installed package, using PROMPT and INITIAL when supplied."
-  (let* ((serial (adb-read-device))
+(defun adb--menu-serial ()
+  "Return the device pinned by the active am or pm menu.
+Outside those menus, select a device in the usual way."
+  (or (ignore-errors (transient-scope '(adb-am adb-pm)))
+      (adb-read-device)))
+
+(defun adb--menu-arguments ()
+  "Return arguments of the active am or pm menu, or nil."
+  (ignore-errors
+    (let ((command (oref (transient-prefix-object) command)))
+      (and (memq command '(adb-am adb-pm))
+           (transient-args command)))))
+
+(defun adb--read-package (&optional prompt initial serial)
+  "Read an installed package, using PROMPT, INITIAL, and SERIAL."
+  (let* ((serial (or serial (adb--menu-serial)))
          (packages (adb-packages serial)))
     (completing-read (or prompt "Package: ") packages nil nil initial)))
+
+(defun adb--read-with-fallback (reader prompt initial)
+  "Call READER, or read free text if it fails.
+PROMPT and INITIAL are passed through."
+  (condition-case err
+      (funcall reader prompt initial)
+    (error
+     (message "adb: %s" (error-message-string err))
+     (read-string prompt initial))))
 
 (defun adb--read-package-argument (prompt initial-input _history)
   "Read a package for a Transient option.
 PROMPT and INITIAL-INPUT come from Transient.  A failed package query falls
 back to free text."
-  (condition-case err
-      (adb--read-package prompt initial-input)
-    (error
-     (message "adb: %s" (error-message-string err))
-     (read-string prompt initial-input))))
+  (adb--read-with-fallback
+   (lambda (read-prompt initial)
+     (adb--read-package read-prompt initial (adb--menu-serial)))
+   prompt initial-input))
+
+(defun adb--completion-value (prompt labels initial)
+  "Read PROMPT from LABELS and return the unannotated value.
+LABELS are (LABEL . VALUE) pairs.  INITIAL and typed values that are not in
+LABELS are preserved."
+  (if (null labels)
+      (read-string prompt initial)
+    (let ((choice (completing-read prompt (mapcar #'car labels) nil nil
+                                   initial)))
+      (or (cdr (assoc choice labels)) choice))))
 
 (defun adb--read-component-argument (prompt initial-input _history)
-  "Read a package/activity component for a Transient option.
-PROMPT and INITIAL-INPUT come from Transient.  Package names are offered as
-the initial candidates."
-  (condition-case err
-      (adb--read-package (or prompt "Component (package/activity): ")
-                         initial-input)
-    (error
-     (message "adb: %s" (error-message-string err))
-     (read-string prompt initial-input))))
+  "Read a package/class component for a Transient option.
+PROMPT and INITIAL-INPUT come from Transient.  Components come from the
+selected package, or from a package selected for this prompt."
+  (adb--read-with-fallback
+   (lambda (read-prompt initial)
+     (let* ((serial (adb--menu-serial))
+            (package (or (adb--option-value "--package="
+                                            (adb--menu-arguments))
+                         (adb--read-package "Package: " nil serial)))
+            (components (adb-package-components serial package)))
+       (adb--completion-value
+        read-prompt
+        (mapcar (lambda (component)
+                  (cons (format "%s (%s)" (car component) (cdr component))
+                        (car component)))
+                components)
+        (or initial (concat package "/")))))
+   (or prompt "Component (package/class): ") initial-input))
+
+(defun adb--read-instrumentation-argument (prompt initial-input _history)
+  "Read an instrumentation component, using PROMPT and INITIAL-INPUT."
+  (adb--read-with-fallback
+   (lambda (read-prompt initial)
+     (adb--completion-value
+      read-prompt
+      (mapcar (lambda (entry)
+                (cons (format "%s (target %s)" (car entry) (cdr entry))
+                      (car entry)))
+              (adb-instrumentation (adb--menu-serial)))
+      initial))
+   prompt initial-input))
 
 (defun adb--read-user-argument (prompt initial-input _history)
   "Read an Android user id, using PROMPT and INITIAL-INPUT.
-`current', `all', and `0' are offered, and another id can be typed."
-  (completing-read prompt '("current" "all" "0") nil nil initial-input))
+Candidates are the device's users plus `current' and `all'.  Another id can
+be typed."
+  (adb--read-with-fallback
+   (lambda (read-prompt initial)
+     (let* ((users (adb-users (adb--menu-serial)))
+            (choice
+             (completing-read
+              read-prompt
+              (append '("current" "all")
+                      (mapcar (lambda (user)
+                                (format "%s (%s)" (car user) (cdr user)))
+                              users))
+              nil nil initial)))
+       (if (string-match "\\`\\([0-9]+\\)\\(?: \\|\\'\\)" choice)
+           (match-string 1 choice)
+         choice)))
+   prompt initial-input))
 
 (defun adb--permission-names (output)
   "Return permission names parsed from `pm list permissions' OUTPUT."
@@ -109,19 +177,40 @@ the initial candidates."
            (split-string (or output "") "\n" t))))
    #'string<))
 
+(defun adb--permission-status (status)
+  "Return a readable label for permission STATUS."
+  (cond ((eq status t) "granted")
+        ((eq status 'mixed) "mixed")
+        (t "not granted")))
+
 (defun adb--read-permission-argument (prompt initial-input _history)
   "Read a runtime permission, using PROMPT and INITIAL-INPUT.
-Candidates are the device's dangerous permissions.  A failed query falls back
-to free text."
-  (let ((permissions
-         (condition-case err
-             (adb--permission-names
-              (adb-query (adb-read-device)
-                         "shell" "pm" "list" "permissions" "-d" "-g"))
-           (error
-            (message "adb: %s" (error-message-string err))
-            nil))))
-    (completing-read prompt permissions nil nil initial-input)))
+When a package is selected, candidates are its runtime permissions and show
+their grant state.  Otherwise the device's dangerous permissions are used."
+  (adb--read-with-fallback
+   (lambda (read-prompt initial)
+     (let* ((serial (adb--menu-serial))
+            (arguments (adb--menu-arguments))
+            (package (adb--option-value "--package=" arguments))
+            (user (adb--option-value "--user=" arguments))
+            (specific (and package
+                           (adb-package-permissions serial package user))))
+       (if specific
+           (adb--completion-value
+            read-prompt
+            (mapcar (lambda (permission)
+                      (cons (format "%s (%s)"
+                                    (car permission)
+                                    (adb--permission-status (cdr permission)))
+                            (car permission)))
+                    specific)
+            initial)
+         (completing-read
+          read-prompt
+          (adb--permission-names
+           (adb-query serial "shell" "pm" "list" "permissions" "-d" "-g"))
+          nil nil initial))))
+   prompt initial-input))
 
 (defvar adb-remote-path-history nil
   "History of device paths entered for file transfers.")
@@ -465,8 +554,9 @@ through a host shell."
 (defun adb--run-shell (label arguments &optional always-show)
   "Run adb shell ARGUMENTS on the selected device.
 LABEL names the output buffer.  Show it when ALWAYS-SHOW is non-nil, the
-command fails, or it writes output.  A silent success only prints a message."
-  (let* ((serial (adb-read-device))
+command fails, or it writes output.  A silent success only prints a message.
+An active am or pm menu keeps the device selected when that menu opened."
+  (let* ((serial (adb--menu-serial))
          (buffer (get-buffer-create (format "*adb-%s*" label))))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
@@ -613,13 +703,11 @@ activity."
       arguments
     (cons (concat "--package=" (adb--read-package)) arguments)))
 
-(defun adb--ensure-component (arguments)
-  "Return ARGUMENTS, prompting for a component when none is set."
+(defun adb--ensure-component (arguments reader prompt)
+  "Return ARGUMENTS, prompting with READER and PROMPT when needed."
   (if (adb--option-value "--component=" arguments)
       arguments
-    (cons (concat "--component="
-                  (adb--read-component-argument
-                   "Component (package/activity): " nil nil))
+    (cons (concat "--component=" (funcall reader prompt nil nil))
           arguments)))
 
 (defun adb--ensure-permission (arguments)
@@ -723,7 +811,10 @@ activity."
   (interactive)
   (adb--run-shell "am-instrument"
                   (adb--am-instrument-arguments
-                   (adb--ensure-component (transient-args 'adb-am)))
+                   (adb--ensure-component
+                    (transient-args 'adb-am)
+                    #'adb--read-instrumentation-argument
+                    "Instrumentation component: "))
                   t))
 
 (defun adb-am-set-debug-app ()
@@ -864,9 +955,11 @@ EXTRAS are flags inserted before the package."
 
 (defun adb--pm-change-permission (label command)
   "Run pm COMMAND and report it as LABEL."
-  (let ((arguments (adb--ensure-permission (transient-args 'adb-pm))))
+  (let ((arguments (transient-args 'adb-pm)))
     (unless (member "--all-permissions" arguments)
       (setq arguments (adb--ensure-package arguments)))
+    (unless (member "--all-permissions" arguments)
+      (setq arguments (adb--ensure-permission arguments)))
     (adb--run-shell label (adb--pm-permission-arguments command arguments))))
 
 (defun adb-pm-grant ()
@@ -950,7 +1043,9 @@ EXTRAS are flags inserted before the package."
     ("i" "Instrument" adb-am-instrument)
     ("d" "Set debug app" adb-am-set-debug-app)
     ("x" "Clear debug app" adb-am-clear-debug-app)
-    ("l" "Activity stacks" adb-am-stack-list)]])
+    ("l" "Activity stacks" adb-am-stack-list)]]
+  (interactive)
+  (transient-setup 'adb-am nil nil :scope (adb-read-device)))
 
 ;;;###autoload (autoload 'adb-pm "adb-transient" nil t)
 (transient-define-prefix adb-pm ()
@@ -995,7 +1090,9 @@ EXTRAS are flags inserted before the package."
    ["Info"
     ("u" "List users" adb-pm-list-users)
     ("f" "List features" adb-pm-list-features)
-    ("t" "List instrumentation" adb-pm-list-instrumentation)]])
+    ("t" "List instrumentation" adb-pm-list-instrumentation)]]
+  (interactive)
+  (transient-setup 'adb-pm nil nil :scope (adb-read-device)))
 
 ;;;###autoload (autoload 'adb "adb-transient" nil t)
 (transient-define-prefix adb ()

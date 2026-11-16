@@ -84,6 +84,32 @@
                          commands)))
       (delete-file apk))))
 
+(ert-deftest adb-users-parses-user-info ()
+  (should (equal (adb-parse-users
+                  "Users:
+UserInfo{0:Owner:4c13} running
+UserInfo{666:XSpace User:80001010} running
+")
+                 '(("0" . "Owner") ("666" . "XSpace User")))))
+
+(ert-deftest adb-components-and-instrumentation-parse-query-lines ()
+  (should (equal (adb-parse-components
+                  "com.example/.Main\nnot a component\ncom.example/.Main\n")
+                 '("com.example/.Main")))
+  (should (equal (adb-parse-instrumentation
+                  "instrumentation:com.example.test/androidx.test.runner.AndroidJUnitRunner (target=com.example)\n")
+                 '(("com.example.test/androidx.test.runner.AndroidJUnitRunner"
+                    . "com.example")))))
+
+(ert-deftest adb-runtime-permissions-keep-user-grant-state ()
+  (let ((output "User 0:\n      runtime permissions:\n        android.permission.CAMERA: granted=true, flags=[]\n        android.permission.RECORD_AUDIO: granted=false, flags=[]\n      install permissions:\n        android.permission.INTERNET: granted=true\n    User 666:\n      runtime permissions:\n        android.permission.CAMERA: granted=false, flags=[]\n"))
+    (should (equal (adb-parse-runtime-permissions output "0")
+                   '(("android.permission.CAMERA" . t)
+                     ("android.permission.RECORD_AUDIO" . nil))))
+    (should (equal (adb-parse-runtime-permissions output)
+                   '(("android.permission.CAMERA" . mixed)
+                     ("android.permission.RECORD_AUDIO" . nil))))))
+
 (ert-deftest adb-packages-parses-and-sorts-package-list ()
   (cl-letf (((symbol-function 'adb-query)
              (lambda (_serial &rest _arguments)

@@ -60,7 +60,10 @@ its consumers have been updated; do not load both implementations.
   expose the common `am` and `pm` actions together with their usual options:
   intent fields, launch flags, user, package filters, permissions, and
   keep-data or cache-only switches. Package, component, permission, and user
-  prompts offer candidates. APK installation remains an adb operation beside
+  prompts offer candidates. Entering either submenu pins one device for its
+  queries and commands. Components come from the selected package, users come
+  from `pm list users', and permissions show the selected package's runtime
+  grant state. APK installation remains an adb operation beside
   the shell menus. Loading `adb.el` alone does not load Transient.
 
 Set `adb-default-device-serial` to avoid repeated selection prompts.

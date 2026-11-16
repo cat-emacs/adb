@@ -240,6 +240,101 @@ The result is sorted and excludes the `package:' prefix from `pm list packages'.
 " t))))
    #'string<))
 
+(defun adb-parse-users (output)
+  "Return (ID . NAME) entries from `pm list users' OUTPUT."
+  (let (users)
+    (dolist (line (split-string (or output "") "\n" t))
+      (when (string-match "UserInfo{\\([0-9]+\\):\\([^:]+\\):" line)
+        (push (cons (match-string 1 line) (match-string 2 line)) users)))
+    (nreverse users)))
+
+(defun adb-users (serial)
+  "Return users on SERIAL as (ID . NAME) pairs."
+  (adb-parse-users (adb-query serial "shell" "pm" "list" "users")))
+
+(defun adb-parse-components (output)
+  "Return package/class names found in OUTPUT."
+  (sort
+   (delete-dups
+    (delq nil
+          (mapcar
+           (lambda (line)
+             (when (string-match
+                    "\\`[[:space:]]*\\([^[:space:]]+/[^[:space:]]+\\)\\'"
+                    line)
+               (match-string 1 line)))
+           (split-string (or output "") "\n" t))))
+   #'string<))
+
+(defun adb-package-components (serial package)
+  "Return components of PACKAGE on SERIAL.
+Each result is (COMPONENT . KIND), where KIND is `activity', `service', or
+`receiver'.  A query that fails is skipped."
+  (let (components)
+    (dolist (entry '(("activities" . activity)
+                     ("services" . service)
+                     ("receivers" . receiver)))
+      (condition-case nil
+          (dolist (component
+                   (adb-parse-components
+                    (adb-query serial "shell" "cmd" "package"
+                               (format "query-%s" (car entry))
+                               "--components" "-p" package)))
+            (push (cons component (cdr entry)) components))
+        (error nil)))
+    (sort components (lambda (a b) (string< (car a) (car b))))))
+
+(defun adb-parse-instrumentation (output)
+  "Return (COMPONENT . TARGET) entries from `pm list instrumentation' OUTPUT."
+  (let (entries)
+    (dolist (line (split-string (or output "") "\n" t))
+      (when (string-match
+             "\\`instrumentation:\\([^[:space:]]+\\) (target=\\([^)]+\\))"
+             line)
+        (push (cons (match-string 1 line) (match-string 2 line)) entries)))
+    (nreverse entries)))
+
+(defun adb-instrumentation (serial)
+  "Return instrumentation components on SERIAL as (COMPONENT . TARGET)."
+  (adb-parse-instrumentation
+   (adb-query serial "shell" "pm" "list" "instrumentation")))
+
+(defun adb-parse-runtime-permissions (output &optional user)
+  "Return runtime permissions from `dumpsys package' OUTPUT.
+Each result is (PERMISSION . STATUS), where STATUS is t, nil, or `mixed'.
+Optional USER limits the result to that numeric user id."
+  (let ((wanted (and user (string-match-p "\\`[0-9]+\\'" user) user))
+        current in-runtime states)
+    (dolist (line (split-string (or output "") "\n" t))
+      (cond
+       ((string-match "\\`[[:space:]]*User \\([0-9]+\\):" line)
+        (setq current (match-string 1 line)
+              in-runtime nil))
+       ((string-match-p "runtime permissions:" line)
+        (setq in-runtime t))
+       ((and in-runtime
+             (or (null wanted) (equal current wanted))
+             (string-match
+              "\\`[[:space:]]*\\([^[:space:]]+\\): granted=\\(true\\|false\\)"
+              line))
+        (let* ((permission (match-string 1 line))
+               (granted (string= (match-string 2 line) "true"))
+               (existing (assoc permission states)))
+          (if existing
+              (unless (eq (cdr existing) granted)
+                (setcdr existing 'mixed))
+            (push (cons permission granted) states))))
+       (in-runtime
+        (setq in-runtime nil))))
+    (sort states (lambda (a b) (string< (car a) (car b))))))
+
+(defun adb-package-permissions (serial package &optional user)
+  "Return runtime permissions declared by PACKAGE on SERIAL.
+Optional USER limits grant status to that numeric user id."
+  (adb-parse-runtime-permissions
+   (adb-query serial "shell" "dumpsys" "package" package)
+   user))
+
 (defun adb-getprop (serial property)
   "Return PROPERTY from SERIAL's `getprop' output."
   (string-trim (adb-query serial "shell" "getprop" property)))
